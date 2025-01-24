@@ -64,7 +64,7 @@
 #elif defined(__QNX__) || defined(__QNXNTO__)
 #include "hal/tpm_io_qnx.c"
 #elif defined(__UBOOT__)
-#include "examples/tpm_io_uboot.c"
+#include "hal/tpm_io_uboot.c"
 #elif defined(__XILINX__)
 #include "hal/tpm_io_xilinx.c"
 #elif defined(WOLFTPM_INFINEON_TRICORE) || defined(CY_USING_HAL)

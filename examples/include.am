@@ -24,7 +24,6 @@ EXTRA_DIST += examples/run_examples.sh
 endif
 
 dist_example_DATA+= examples/README.md \
-                    examples/tpm_io_uboot.c \
                     examples/tpm_test_keys.c \
                     examples/tpm_test_keys.h \
                     examples/tpm_test.h
