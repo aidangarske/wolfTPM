@@ -24,7 +24,7 @@
 
 #include <wolftpm/tpm2.h>
 #include <wolftpm/tpm2_tis.h>
-#include "tpm_io.h"
+#include "hal/tpm_io.h"
 
 /******************************************************************************/
 /* --- BEGIN IO Callback Logic -- */
