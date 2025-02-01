@@ -53,8 +53,6 @@
 
 #if defined(WOLFTPM_MMIO)
 #include "tpm_io_mmio.c"
-#elif defined(__UBOOT__)
-#include "hal/tpm_io_uboot.c"
 #elif defined(__linux__)
 #include "hal/tpm_io_linux.c"
 #elif defined(WOLFSSL_STM32_CUBEMX)
