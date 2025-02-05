@@ -34,6 +34,9 @@
 #include <config.h>
 #include <tpm-common.h>
 
+/* supresses waring for now */
+extern int tcg2_platform_get_tpm2(struct udevice **dev);
+
 /* Use the U-Boot TPM device and TIS layer */
 int TPM2_LINUX_SendCommand(TPM2_CTX* ctx, TPM2_Packet* packet)
 {

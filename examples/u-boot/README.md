@@ -90,3 +90,137 @@ wolfTPM's rich API provides wrappers for performing complete TPM 2.0 operations.
 wolfTPM wrappers also provide templates for the most commonly used types of TPM 2.0 keys.
 
 Please contact us at facts@wolfssl.com if you are interested in using wolfTPM with U-boot.
+
+## Adding wolfTPM Commands to U-Boot
+
+### 1. Configuration
+
+Enable wolfTPM support in U-Boot by adding these options to your board's defconfig:
+
+```
+CONFIG_TPM=y
+CONFIG_TPM_V2=y
+CONFIG_TPM_WOLF=y
+CONFIG_CMD_WOLFTPM=y
+```
+
+Or use `make menuconfig` and enable:
+- Device Drivers → TPM → TPM 2.0 Support
+- Device Drivers → TPM → wolfTPM Support
+- Command line interface → Security commands → Enable wolfTPM commands
+
+### 2. SPI Configuration
+
+Configure SPI for your TPM module. Either:
+
+a) Hardware SPI - Enable your board's SPI controller
+b) Software SPI - Enable bit-banging SPI:
+```
+CONFIG_SPI_SOFT=y
+```
+
+### 3. Device Tree Configuration
+
+Add TPM device to your board's device tree (example for ST33 on RPi3):
+
+```dts
+tpm2-spi {
+    compatible = "spi-gpio";    /* For software SPI */
+    cs-gpios = <&gpio 24 0>;    /* CS pin */
+    gpio-sck = <&gpio 23 0>;    /* Clock pin */
+    gpio-miso = <&gpio 21 0>;   /* MISO pin */
+    gpio-mosi = <&gpio 19 0>;   /* MOSI pin */
+    spi-delay-us = <10>;        /* SPI timing */
+    cs@0 {
+    };
+};
+```
+
+## wolfTPM U-Boot Commands
+
+wolfTPM extends U-Boot with additional TPM 2.0 commands for enhanced security and key management capabilities.
+
+### Available Commands
+
+The following commands are available through the `wolftpm` interface:
+
+```
+wolftpm <command> [arguments]
+```
+
+#### Commands:
+
+* `caps` - Display TPM capabilities and information
+  - Shows manufacturer and vendor information
+  - Displays firmware version and security certifications
+  - Lists available PCR banks and algorithms
+  - Shows active persistent handles
+  - Useful for verifying TPM configuration and status
+
+Example output:
+```
+=> wolftpm caps
+TPM2 Get Capabilities
+Mfg IFX (0x49465800), Vendor IFX, Fw 0.0 (0x00000000)
+Found 0 persistent handles
+Assigned PCR's:
+    SHA1: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+    SHA256: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+```
+
+More commands will be added in future releases to support additional TPM 2.0 operations including:
+- Key generation and management
+- PCR operations
+- NV storage access
+- Cryptographic operations
+
+## Building and Running wolfTPM with U-Boot using QEMU
+
+You can follow the steps here to get a qemu uboot console enviroment.
+https://docs.u-boot.org/en/stable/board/emulation/qemu-arm.html
+
+or follow these steps: 
+```
+make distclean
+export CROSS_COMPILE=aarch64-linux-gnu-
+export ARCH=aarch64
+make qemu_arm64_defconfig
+make -j4
+```
+
+this boots you into a qemu uboot console enviroment.
+
+how to use it with tpm 
+1. get swtpm 
+either
+```
+sudo apt install swtpm
+```
+or 
+```
+git clone git@github.com:stefanberger/swtpm.git
+cd swtpm
+./autogen.sh
+make
+```
+
+2. now that you have swtpm you can start u-boot
+```
+make qemu_arm64_defconfig
+make
+```
+
+3. In a first console invoke swtpm with:
+```
+swtpm socket --tpmstate dir=/tmp/mytpm1 --ctrl type=unixio,path=/tmp/mytpm1/swtpm-sock --log level=20
+```
+
+4. In a second console invoke qemu-system-aarch64 with:
+```
+qemu-system-aarch64 -machine virt -nographic -cpu cortex-a57 -bios u-boot.bin -chardev socket,id=chrtpm,path=/tmp/mytpm1/swtpm-sock -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis-device,tpmdev=tpm0
+```
+
+5. Enable the TPM on U-Boot’s command line with:
+```
+tpm autostart
+```
