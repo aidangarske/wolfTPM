@@ -161,11 +161,54 @@ Example output:
 ```
 => wolftpm caps
 TPM2 Get Capabilities
-Mfg IFX (0x49465800), Vendor IFX, Fw 0.0 (0x00000000)
+TPM2: Caps 0x00000000, Did 0x0000, Vid 0x0000, Rid 0x 0
+Session 0: Edit
+	Handle 0x0 -> 0x40000009
+	Attributes 0x0 -> 0x0
+Command size: 22
+	80 01 00 00 00 16 00 00 01 7a 00 00 00 06 00 00 | .........z......
+	01 05 00 00 00 08                               | ......
+Response size: 83
+	80 01 00 00 00 53 00 00 00 00 01 00 00 00 06 00 | .....S..........
+	00 00 08 00 00 01 05 49 42 4d 00 00 00 01 06 53 | .......IBM.....S
+	57 20 20 00 00 01 07 20 54 50 4d 00 00 01 08 00 | W  .... TPM.....
+	00 00 00 00 00 01 09 00 00 00 00 00 00 01 0a 00 | ................
+	00 00 01 00 00 01 0b 20 24 01 25 00 00 01 0c 00 | ....... $.%.....
+	12 00 00                                        | ...
+Command size: 22
+	80 01 00 00 00 16 00 00 01 7a 00 00 00 06 00 00 | .........z......
+	01 2d 00 00 00 01                               | .-....
+Response size: 27
+	80 01 00 00 00 1b 00 00 00 00 01 00 00 00 06 00 | ................
+	00 00 01 00 00 01 2d 00 00 00 00                | ......-....
+Mfg IBM (0), Vendor SW   TPM, Fw 8228.293 (0x120000), FIPS 140-2 0, CC-EAL4 0
+Command size: 22
+	80 01 00 00 00 16 00 00 01 7a 00 00 00 01 81 00 | .........z......
+	00 00 00 00 00 fe                               | ......
+Response size: 19
+	80 01 00 00 00 13 00 00 00 00 00 00 00 00 01 00 | ................
+	00 00 00                                        | ...
+Handles Cap: Start 0x81000000, Count 0
 Found 0 persistent handles
+Command size: 22
+	80 01 00 00 00 16 00 00 01 7a 00 00 00 05 00 00 | .........z......
+	00 00 00 00 00 01                               | ......
+Response size: 43
+	80 01 00 00 00 2b 00 00 00 00 00 00 00 00 05 00 | .....+..........
+	00 00 04 00 04 03 ff ff ff 00 0b 03 ff ff ff 00 | ................
+	0c 03 ff ff ff 00 0d 03 ff ff ff                | ...........
 Assigned PCR's:
-    SHA1: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
-    SHA256: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+	SHA1:  0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+	SHA256:  0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+Command size: 12
+	80 01 00 00 00 0c 00 00 01 45 00 00             | .........E..
+Response size: 10
+	80 01 00 00 00 0a 00 00 00 00                   | ..........
+wolfTPM2_Shutdown complete
+Command size: 12
+	80 01 00 00 00 0c 00 00 01 45 00 00             | .........E..
+Response size: 10
+	80 01 00 00 00 0a 00 00 00 00                   | ..........
 ```
 
 More commands will be added in future releases to support additional TPM 2.0 operations including:
@@ -176,7 +219,7 @@ More commands will be added in future releases to support additional TPM 2.0 ope
 
 ## Building and Running wolfTPM with U-Boot using QEMU
 
-You can follow the steps here to get a qemu uboot console enviroment.
+You can follow the steps here to get a qemu uboot console environment.
 https://docs.u-boot.org/en/stable/board/emulation/qemu-arm.html
 
 or follow these steps: 
@@ -188,7 +231,7 @@ make qemu_arm64_defconfig
 make -j4
 ```
 
-this boots you into a qemu uboot console enviroment.
+this boots you into a qemu uboot console environment.
 
 how to use it with tpm 
 1. get swtpm 
@@ -210,12 +253,17 @@ make qemu_arm64_defconfig
 make
 ```
 
-3. In a first console invoke swtpm with:
+3. Make der for tpm.
 ```
-swtpm socket --tpmstate dir=/tmp/mytpm1 --ctrl type=unixio,path=/tmp/mytpm1/swtpm-sock --log level=20
+mkdir -p /tmp/mytpm1
 ```
 
-4. In a second console invoke qemu-system-aarch64 with:
+4. In a first console invoke swtpm with:
+```
+swtpm socket --tpm2 --tpmstate dir=/tmp/mytpm1 --ctrl type=unixio,path=/tmp/mytpm1/swtpm-sock --log level=20
+```
+
+5. In a second console invoke qemu-system-aarch64 with:
 ```
 qemu-system-aarch64 -machine virt -nographic -cpu cortex-a57 -bios u-boot.bin -chardev socket,id=chrtpm,path=/tmp/mytpm1/swtpm-sock -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis-device,tpmdev=tpm0
 ```
@@ -224,3 +272,5 @@ qemu-system-aarch64 -machine virt -nographic -cpu cortex-a57 -bios u-boot.bin -c
 ```
 tpm autostart
 ```
+
+To exit the QEMU you can do ctrl-A and then press X
