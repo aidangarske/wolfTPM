@@ -1,4 +1,4 @@
-# Experimental support for Das U-boot 
+# Experimental support for Das U-boot
 
 wolfTPM could be used with all platforms that have hardware SPI support or can use the U-boot software bit-bang implementation(SPI_SOFT).
 
@@ -72,7 +72,7 @@ This way u-boot can be later linked together with wolfTPM.
 
 ## Benefits of using wolfTPM with U-boot
 
-### Native API 
+### Native API
 
 wolfTPM provides native API with full access to all TPM 2.0 commands. For example:
 
@@ -85,7 +85,7 @@ Internal U-boot TPM support for these commands is missing. By adding wolfTPM the
 
 ### Wrappers
 
-wolfTPM's rich API provides wrappers for performing complete TPM 2.0 operations. There are wolfTPM wrappers for the most common and complex TPM 2.0 operations. The wrappers also protect from wrong TPM 2.0 settings and execute all necessary TPM 2.0 commands to achieve the end goal. 
+wolfTPM's rich API provides wrappers for performing complete TPM 2.0 operations. There are wolfTPM wrappers for the most common and complex TPM 2.0 operations. The wrappers also protect from wrong TPM 2.0 settings and execute all necessary TPM 2.0 commands to achieve the end goal.
 
 wolfTPM wrappers also provide templates for the most commonly used types of TPM 2.0 keys.
 
@@ -157,6 +157,8 @@ wolftpm <command> [arguments]
   - Shows active persistent handles
   - Useful for verifying TPM configuration and status
 
+* `help` - Display available commands
+
 Example output:
 ```
 => wolftpm caps
@@ -222,7 +224,21 @@ More commands will be added in future releases to support additional TPM 2.0 ope
 You can follow the steps here to get a qemu uboot console environment.
 https://docs.u-boot.org/en/stable/board/emulation/qemu-arm.html
 
-or follow these steps: 
+how to use it with tpm
+1. get swtpm
+either
+```
+sudo apt install swtpm
+```
+or
+```
+git clone git@github.com:stefanberger/swtpm.git
+cd swtpm
+./autogen.sh
+make
+```
+
+2. Now that you have swtpm you can start and make U-boot using these steps:
 ```
 make distclean
 export CROSS_COMPILE=aarch64-linux-gnu-
@@ -231,29 +247,7 @@ make qemu_arm64_defconfig
 make -j4
 ```
 
-this boots you into a qemu uboot console environment.
-
-how to use it with tpm 
-1. get swtpm 
-either
-```
-sudo apt install swtpm
-```
-or 
-```
-git clone git@github.com:stefanberger/swtpm.git
-cd swtpm
-./autogen.sh
-make
-```
-
-2. now that you have swtpm you can start u-boot
-```
-make qemu_arm64_defconfig
-make
-```
-
-3. Make der for tpm.
+3. Make dir for tpm from U-boot root.
 ```
 mkdir -p /tmp/mytpm1
 ```
@@ -268,7 +262,7 @@ swtpm socket --tpm2 --tpmstate dir=/tmp/mytpm1 --ctrl type=unixio,path=/tmp/mytp
 qemu-system-aarch64 -machine virt -nographic -cpu cortex-a57 -bios u-boot.bin -chardev socket,id=chrtpm,path=/tmp/mytpm1/swtpm-sock -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis-device,tpmdev=tpm0
 ```
 
-5. Enable the TPM on U-Boot’s command line with:
+5. Enable the TPM on U-Boot's command line with:
 ```
 tpm autostart
 ```
