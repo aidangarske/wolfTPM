@@ -1,6 +1,6 @@
 /* tpm_io_uboot.c
  *
- * Copyright (C) 2006-2021 wolfSSL Inc.
+ * Copyright (C) 2006-2025 wolfSSL Inc.
  *
  * This file is part of wolfTPM.
  *
@@ -44,7 +44,7 @@
 #if defined(__UBOOT__)
     #include <config.h>
     int TPM2_IoCb_Uboot_SPI(TPM2_CTX* ctx, const byte* txBuf,
-        byte* rxBuf, word16 xferSz, void* userCtx) 
+        byte* rxBuf, word16 xferSz, void* userCtx)
     {
         int ret = 0;
         struct udevice *dev;

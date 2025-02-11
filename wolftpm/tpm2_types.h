@@ -693,11 +693,9 @@ typedef int64_t  INT64;
     #define WOLFTPM2_PEM_DECODE
 #endif
 
-/* Firmware upgrade requires wolfCrypt for hashing.
- * Supported only for Infineon SLB9672/SLB9673 */
-#if defined(WOLFTPM_FIRMWARE_UPGRADE) && \
-    (defined(WOLFTPM2_NO_WOLFCRYPT) || \
-     (!defined(WOLFTPM_SLB9672) && !defined(WOLFTPM_SLB9673)))
+/* Firmware upgrade supported only for Infineon SLB9672/SLB9673 */
+#if defined(WOLFTPM_FIRMWARE_UPGRADE) && (!defined(WOLFTPM_AUTODETECT) && \
+    (!defined(WOLFTPM_SLB9672) && !defined(WOLFTPM_SLB9673)))
     #undef WOLFTPM_FIRMWARE_UPGRADE
 #endif
 
