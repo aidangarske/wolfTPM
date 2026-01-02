@@ -1073,6 +1073,176 @@ TPM_RC TPM2_GetCapability(GetCapability_In* in, GetCapability_Out* out)
     return rc;
 }
 
+#ifdef WOLFTPM_SPDM
+TPM_RC TPM2_AC_GetCapability(AC_GetCapability_In* in, AC_GetCapability_Out* out)
+{
+    TPM_RC rc;
+    TPM2_CTX* ctx = TPM2_GetActiveCtx();
+
+    if (ctx == NULL || in == NULL || out == NULL)
+        return BAD_FUNC_ARG;
+
+    /* Validate AC handle is in AC range */
+    if (!TPM2_IS_AC_HANDLE(in->ac)) {
+    #ifdef DEBUG_WOLFTPM
+        printf("TPM2_AC_GetCapability: Invalid AC handle 0x%x\n",
+            (unsigned int)in->ac);
+    #endif
+        return TPM_RC_HANDLE;
+    }
+
+    rc = TPM2_AcquireLock(ctx);
+    if (rc == TPM_RC_SUCCESS) {
+        TPM2_Packet packet;
+        TPM2_Packet_Init(ctx, &packet);
+        TPM2_Packet_AppendU32(&packet, in->ac);
+        TPM2_Packet_AppendU32(&packet, in->capability);
+        TPM2_Packet_AppendU32(&packet, in->count);
+        TPM2_Packet_Finalize(&packet, TPM_ST_NO_SESSIONS, TPM_CC_AC_GetCapability);
+
+        /* send command */
+        rc = TPM2_SendCommand(ctx, &packet);
+        if (rc == TPM_RC_SUCCESS) {
+            UINT32 count;
+            UINT32 i;
+            UINT32 acCapabilities;
+            UINT32 acType;
+
+            /* Parse moreData (TPMI_YES_NO) */
+            TPM2_Packet_ParseU8(&packet, (byte*)&out->moreData);
+
+            /* Parse TPML_AC_CAPABILITIES: count (UINT32) */
+            TPM2_Packet_ParseU32(&packet, &count);
+            if (count > MAX_AC_CAPABILITIES) {
+                count = MAX_AC_CAPABILITIES;
+            }
+            out->capabilitiesData.count = count;
+
+            /* Parse each TPMS_AC_CAPABILITIES */
+            for (i = 0; i < count; i++) {
+                TPM2_Packet_ParseU32(&packet, &acCapabilities);
+                TPM2_Packet_ParseU32(&packet, &acType);
+                /* Convert from big-endian */
+                out->capabilitiesData.acCapabilities[i].acCapabilities = be32_to_cpu(acCapabilities);
+                out->capabilitiesData.acCapabilities[i].acType = be32_to_cpu(acType);
+            }
+
+        #ifdef DEBUG_WOLFTPM
+            printf("TPM2_AC_GetCapability: AC 0x%x, count=%d, moreData=%d\n",
+                (unsigned int)in->ac,
+                (int)out->capabilitiesData.count,
+                (int)out->moreData);
+            if (out->capabilitiesData.count > 0) {
+                printf("  capabilities[0]=0x%x, type[0]=0x%x\n",
+                    (unsigned int)out->capabilitiesData.acCapabilities[0].acCapabilities,
+                    (unsigned int)out->capabilitiesData.acCapabilities[0].acType);
+            }
+        #endif
+        }
+        else if (rc == TPM_RC_COMMAND_CODE) {
+        #ifdef DEBUG_WOLFTPM
+            printf("TPM2_AC_GetCapability: Command not supported (transport/kernel blocking)\n");
+        #endif
+        }
+
+        TPM2_ReleaseLock(ctx);
+    }
+    return rc;
+}
+
+TPM_RC TPM2_AC_Send(AC_Send_In* in, AC_Send_Out* out)
+{
+    TPM_RC rc;
+    TPM2_CTX* ctx = TPM2_GetActiveCtx();
+
+    if (ctx == NULL || in == NULL || out == NULL)
+        return BAD_FUNC_ARG;
+
+    /* Validate AC handle is in AC range */
+    if (!TPM2_IS_AC_HANDLE(in->ac)) {
+    #ifdef DEBUG_WOLFTPM
+        printf("TPM2_AC_Send: Invalid AC handle 0x%x\n",
+            (unsigned int)in->ac);
+    #endif
+        return TPM_RC_HANDLE;
+    }
+
+    /* Validate request size */
+    if (in->acDataIn.size == 0) {
+        return BAD_FUNC_ARG;
+    }
+
+    rc = TPM2_AcquireLock(ctx);
+    if (rc == TPM_RC_SUCCESS) {
+        TPM2_Packet packet;
+        TPM2_Packet_Init(ctx, &packet);
+        /* Marshal TCG AC_Send structure: sendObject, authHandle, ac, acDataIn */
+        TPM2_Packet_AppendU32(&packet, in->sendObject);
+        TPM2_Packet_AppendU32(&packet, in->authHandle);
+        TPM2_Packet_AppendU32(&packet, in->ac);
+        /* Append TPM2B_MAX_BUFFER: size (UINT16) + data */
+        TPM2_Packet_AppendU16(&packet, in->acDataIn.size);
+        TPM2_Packet_AppendBytes(&packet, in->acDataIn.buffer, in->acDataIn.size);
+        TPM2_Packet_Finalize(&packet, TPM_ST_NO_SESSIONS, TPM_CC_AC_Send);
+
+        /* send command */
+        rc = TPM2_SendCommand(ctx, &packet);
+        if (rc == TPM_RC_SUCCESS) {
+            UINT16 tag;
+            UINT16 nonceSize;
+            UINT16 dataSize;
+
+            /* Parse TPMS_AC_OUTPUT */
+            TPM2_Packet_ParseU16(&packet, &tag);
+            out->response.tag = tag;
+
+            /* Parse TPM2B_NONCE */
+            TPM2_Packet_ParseU16(&packet, &nonceSize);
+            if (nonceSize > sizeof(out->response.nonceTPM.buffer)) {
+                nonceSize = sizeof(out->response.nonceTPM.buffer);
+            }
+            out->response.nonceTPM.size = nonceSize;
+            if (nonceSize > 0) {
+                TPM2_Packet_ParseBytes(&packet, out->response.nonceTPM.buffer,
+                    nonceSize);
+            }
+
+            /* Parse TPM2B_MAX_BUFFER (SPDM response data) */
+            TPM2_Packet_ParseU16(&packet, &dataSize);
+            if (dataSize > sizeof(out->response.data.buffer)) {
+                dataSize = sizeof(out->response.data.buffer);
+            }
+            out->response.data.size = dataSize;
+            if (dataSize > 0) {
+                TPM2_Packet_ParseBytes(&packet, out->response.data.buffer,
+                    dataSize);
+            }
+
+        #ifdef DEBUG_WOLFTPM
+            printf("TPM2_AC_Send: AC 0x%x, tag=0x%x, nonceSize=%d, dataSize=%d\n",
+                (unsigned int)in->ac,
+                (unsigned int)out->response.tag,
+                (unsigned int)nonceSize,
+                (unsigned int)dataSize);
+        #endif
+        }
+        else if (rc == TPM_RC_COMMAND_CODE) {
+        #ifdef DEBUG_WOLFTPM
+            printf("TPM2_AC_Send: Command not supported (transport/kernel blocking)\n");
+        #endif
+        }
+        else if (rc == TPM_RC_SIZE) {
+        #ifdef DEBUG_WOLFTPM
+            printf("TPM2_AC_Send: Request size exceeds MAX_COMMAND_SIZE\n");
+        #endif
+        }
+
+        TPM2_ReleaseLock(ctx);
+    }
+    return rc;
+}
+#endif /* WOLFTPM_SPDM */
+
 TPM_RC TPM2_GetRandom(GetRandom_In* in, GetRandom_Out* out)
 {
     TPM_RC rc;

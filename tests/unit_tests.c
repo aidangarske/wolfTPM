@@ -787,6 +787,256 @@ static void test_wolfTPM2_thread_local_storage(void)
 #endif /* HAVE_THREAD_LS && HAVE_PTHREAD */
 }
 
+#ifdef WOLFTPM_SPDM
+/* Test AC (Authenticated Controller) functions */
+static void test_wolfTPM2_AC_Functions(void)
+{
+    int rc;
+    WOLFTPM2_DEV dev;
+    TPM_HANDLE acHandles[16];
+    word32 handleCount = 0;
+    TPMA_AC capabilities;
+    TPM_AT acType;
+    byte spdmRequest[64];
+    byte spdmResponse[1024];
+    word32 respSz = sizeof(spdmResponse);
+    TPM2B_NONCE nonce;
+    TPM2B_AUTH sessionKey;
+    WOLFTPM2_SESSION session;
+    byte sharedSecret[32];
+    TPM_HANDLE testHandle = 0x40000000;
+    word32 i;
+    int acCommandsSupported = 1; /* Assume supported until proven otherwise */
+
+    printf("Test TPM Wrapper:\tAC Functions:\t");
+
+    /* Initialize device */
+    rc = wolfTPM2_Init(&dev, TPM2_IoCb, NULL);
+    if (rc != 0) {
+        printf("Failed (Init failed: 0x%x)\n", rc);
+        return;
+    }
+
+    /* Test 1: Parameter validation for GetACHandles */
+    rc = wolfTPM2_GetACHandles(NULL, acHandles, &handleCount, 16);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_GetACHandles(&dev, NULL, &handleCount, 16);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_GetACHandles(&dev, acHandles, NULL, 16);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_GetACHandles(&dev, acHandles, &handleCount, 0);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+
+    /* Test 2: Discover AC handles (may return 0 if TPM doesn't support AC) */
+    handleCount = 0;
+    rc = wolfTPM2_GetACHandles(&dev, acHandles, &handleCount, 16);
+    /* Success even if no handles found */
+    if (rc == TPM_RC_SUCCESS && handleCount > 0) {
+        /* Verify handles are in AC range */
+        for (i = 0; i < handleCount; i++) {
+            AssertTrue(TPM2_IS_AC_HANDLE(acHandles[i]));
+        }
+    }
+
+    /* Test 3: Parameter validation for AC_GetCapability */
+    rc = wolfTPM2_AC_GetCapability(NULL, testHandle, &capabilities, &acType);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_AC_GetCapability(&dev, testHandle, NULL, &acType);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_AC_GetCapability(&dev, testHandle, &capabilities, NULL);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+
+    /* Test 4: Invalid AC handle (non-AC handle)
+     * Note: Returns TPM_RC_HANDLE or TPM_RC_VALUE on TPMs with AC support (v1.84+),
+     * or TPM_RC_COMMAND_CODE on TPMs without AC support (like swtpm) */
+    rc = wolfTPM2_AC_GetCapability(&dev, TPM_RH_OWNER, &capabilities, &acType);
+    if (WOLFTPM_IS_COMMAND_UNAVAILABLE(rc)) {
+        /* TPM doesn't support AC commands - skip AC-specific tests */
+        acCommandsSupported = 0;
+        printf("Passed (AC commands not supported by TPM)\n");
+        wolfTPM2_Cleanup(&dev);
+        return;
+    }
+    /* Should return TPM_RC_HANDLE for invalid handle (permanent handle, not AC handle) */
+    AssertIntEQ(rc, TPM_RC_HANDLE);
+    (void)acCommandsSupported;
+
+    /* Test 5: AC_GetCapability with valid AC handle (if exists) */
+    if (handleCount > 0) {
+        rc = wolfTPM2_AC_GetCapability(&dev, acHandles[0], &capabilities, &acType);
+        /* May succeed or return TPM_RC_HANDLE if handle doesn't exist */
+        if (rc == TPM_RC_SUCCESS) {
+            /* Verify capability bits are valid (capabilities is unsigned, so just check type) */
+            AssertTrue(acType == TPM_AT_PVT || acType == TPM_AT_PUB);
+        }
+    }
+
+    /* Test 6: Parameter validation for AC_Send */
+    XMEMSET(spdmRequest, 0x01, sizeof(spdmRequest));
+    rc = wolfTPM2_AC_Send(NULL, testHandle, spdmRequest, sizeof(spdmRequest),
+                         spdmResponse, &respSz, NULL);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_AC_Send(&dev, testHandle, NULL, sizeof(spdmRequest),
+                         spdmResponse, &respSz, NULL);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_AC_Send(&dev, testHandle, spdmRequest, 0,
+                         spdmResponse, &respSz, NULL);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_AC_Send(&dev, testHandle, spdmRequest, sizeof(spdmRequest),
+                         NULL, &respSz, NULL);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_AC_Send(&dev, testHandle, spdmRequest, sizeof(spdmRequest),
+                         spdmResponse, NULL, NULL);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+
+    /* Test 7: Invalid AC handle for AC_Send */
+    rc = wolfTPM2_AC_Send(&dev, TPM_RH_OWNER, spdmRequest, sizeof(spdmRequest),
+                         spdmResponse, &respSz, NULL);
+    /* Should return TPM_RC_HANDLE for invalid handle (permanent handle, not AC handle) */
+    AssertIntEQ(rc, TPM_RC_HANDLE);
+
+    /* Test 8: AC_Send with valid AC handle (if exists) */
+    if (handleCount > 0) {
+        /* Create a simple SPDM GET_VERSION request */
+        spdmRequest[0] = 0x10;  /* SPDM Version: 1.0 */
+        spdmRequest[1] = 0x84;  /* Request Response Code: GET_VERSION */
+        respSz = sizeof(spdmResponse);
+        XMEMSET(&nonce, 0, sizeof(nonce));
+        rc = wolfTPM2_AC_Send(&dev, acHandles[0], spdmRequest, 2,
+                             spdmResponse, &respSz, &nonce);
+        /* May succeed or return error if TPM doesn't support SPDM */
+        if (rc == TPM_RC_SUCCESS) {
+            AssertTrue(respSz > 0);
+            AssertTrue(nonce.size <= sizeof(nonce.buffer));
+        }
+    }
+
+    /* Test 9: Parameter validation for AC_DeriveSessionKey */
+    XMEMSET(sharedSecret, 0xAA, sizeof(sharedSecret));
+    XMEMSET(&nonce, 0, sizeof(nonce));
+    nonce.size = 32;
+    XMEMSET(nonce.buffer, 0xBB, nonce.size);
+    rc = wolfTPM2_AC_DeriveSessionKey(NULL, testHandle, sharedSecret,
+                                     sizeof(sharedSecret), &nonce, &sessionKey);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_AC_DeriveSessionKey(&dev, testHandle, NULL,
+                                     sizeof(sharedSecret), &nonce, &sessionKey);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_AC_DeriveSessionKey(&dev, testHandle, sharedSecret, 0,
+                                     &nonce, &sessionKey);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_AC_DeriveSessionKey(&dev, testHandle, sharedSecret,
+                                     sizeof(sharedSecret), NULL, &sessionKey);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_AC_DeriveSessionKey(&dev, testHandle, sharedSecret,
+                                     sizeof(sharedSecret), &nonce, NULL);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+
+    /* Test 10: Invalid AC handle for AC_DeriveSessionKey */
+    rc = wolfTPM2_AC_DeriveSessionKey(&dev, TPM_RH_OWNER, sharedSecret,
+                                     sizeof(sharedSecret), &nonce, &sessionKey);
+    /* Should return TPM_RC_HANDLE for invalid handle (permanent handle, not AC handle) */
+    AssertIntEQ(rc, TPM_RC_HANDLE);
+
+    /* Test 11: AC_DeriveSessionKey with valid handle (if exists) */
+    if (handleCount > 0) {
+        rc = wolfTPM2_AC_DeriveSessionKey(&dev, acHandles[0], sharedSecret,
+                                         sizeof(sharedSecret), &nonce, &sessionKey);
+        if (rc == TPM_RC_SUCCESS) {
+            /* Verify session key size (32 bytes for SHA-256) */
+            AssertIntEQ(sessionKey.size, 32);
+        }
+    }
+
+    /* Test 12: Parameter validation for AC_StartSession */
+    XMEMSET(&sessionKey, 0, sizeof(sessionKey));
+    sessionKey.size = 32;
+    XMEMSET(sessionKey.buffer, 0xCC, sessionKey.size);
+    rc = wolfTPM2_AC_StartSession(NULL, &session, testHandle, &sessionKey, TPM_ALG_CFB);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_AC_StartSession(&dev, NULL, testHandle, &sessionKey, TPM_ALG_CFB);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_AC_StartSession(&dev, &session, testHandle, NULL, TPM_ALG_CFB);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+
+    /* Test 13: Invalid AC handle for AC_StartSession */
+    rc = wolfTPM2_AC_StartSession(&dev, &session, TPM_RH_OWNER, &sessionKey, TPM_ALG_CFB);
+    /* Should return TPM_RC_HANDLE for invalid handle (permanent handle, not AC handle) */
+    AssertIntEQ(rc, TPM_RC_HANDLE);
+
+    /* Test 14: AC_StartSession with valid handle (if exists and session key derived) */
+    if (handleCount > 0) {
+        /* First derive session key */
+        XMEMSET(sharedSecret, 0xDD, sizeof(sharedSecret));
+        XMEMSET(&nonce, 0, sizeof(nonce));
+        nonce.size = 32;
+        XMEMSET(nonce.buffer, 0xEE, nonce.size);
+        rc = wolfTPM2_AC_DeriveSessionKey(&dev, acHandles[0], sharedSecret,
+                                         sizeof(sharedSecret), &nonce, &sessionKey);
+        if (rc == TPM_RC_SUCCESS) {
+            /* Try to start session */
+            rc = wolfTPM2_AC_StartSession(&dev, &session, acHandles[0],
+                                         &sessionKey, TPM_ALG_CFB);
+            /* May succeed or fail depending on TPM state */
+            if (rc == TPM_RC_SUCCESS) {
+                AssertTrue(TPM2_IS_AC_HANDLE(session.handle.hndl) ||
+                          (session.handle.hndl & 0xFF000000) == 0x02000000); /* Session handle */
+            }
+        }
+    }
+
+    /* Test 15: Parameter validation for SPDM_EstablishSecureChannel */
+    XMEMSET(sharedSecret, 0xFF, sizeof(sharedSecret));
+    XMEMSET(&nonce, 0, sizeof(nonce));
+    nonce.size = 32;
+    XMEMSET(nonce.buffer, 0x11, nonce.size);
+    rc = wolfTPM2_SPDM_EstablishSecureChannel(NULL, testHandle, &session,
+                                              sharedSecret, sizeof(sharedSecret), &nonce);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_SPDM_EstablishSecureChannel(&dev, testHandle, NULL,
+                                              sharedSecret, sizeof(sharedSecret), &nonce);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_SPDM_EstablishSecureChannel(&dev, testHandle, &session,
+                                              NULL, sizeof(sharedSecret), &nonce);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_SPDM_EstablishSecureChannel(&dev, testHandle, &session,
+                                              sharedSecret, 0, &nonce);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+    rc = wolfTPM2_SPDM_EstablishSecureChannel(&dev, testHandle, &session,
+                                              sharedSecret, sizeof(sharedSecret), NULL);
+    AssertIntEQ(rc, BAD_FUNC_ARG);
+
+    /* Test 16: Invalid AC handle for SPDM_EstablishSecureChannel */
+    rc = wolfTPM2_SPDM_EstablishSecureChannel(&dev, TPM_RH_OWNER, &session,
+                                              sharedSecret, sizeof(sharedSecret), &nonce);
+    /* Should return TPM_RC_HANDLE for invalid handle (permanent handle, not AC handle) */
+    AssertIntEQ(rc, TPM_RC_HANDLE);
+
+    /* Test 17: CheckACTransportSupport parameter validation */
+    {
+        int supported = 0;
+        rc = wolfTPM2_CheckACTransportSupport(NULL, &supported);
+        AssertIntEQ(rc, BAD_FUNC_ARG);
+        rc = wolfTPM2_CheckACTransportSupport(&dev, NULL);
+        AssertIntEQ(rc, BAD_FUNC_ARG);
+
+        /* Test transport check */
+        rc = wolfTPM2_CheckACTransportSupport(&dev, &supported);
+        /* Function returns:
+         * - TPM_RC_SUCCESS: Transport check completed (supported is 0 or 1)
+         * - Other error: Transport check failed (supported is 0)
+         * We expect TPM_RC_SUCCESS for a successful check */
+        AssertIntEQ(rc, TPM_RC_SUCCESS);
+        /* supported should be 0 (unsupported) or 1 (supported) */
+        AssertTrue(supported == 0 || supported == 1);
+    }
+
+    wolfTPM2_Cleanup(&dev);
+
+    printf("Passed\n");
+}
+#endif /* WOLFTPM_SPDM */
+
 /* Test creating key and exporting keyblob as buffer,
  * importing and loading key. */
 static void test_wolfTPM2_KeyBlob(TPM_ALG_ID alg)
@@ -917,6 +1167,9 @@ int unit_tests(int argc, char *argv[])
     #endif
     test_wolfTPM2_Cleanup();
     test_wolfTPM2_thread_local_storage();
+#ifdef WOLFTPM_SPDM
+    test_wolfTPM2_AC_Functions();
+#endif
 #endif /* !WOLFTPM2_NO_WRAPPER */
 
     return 0;

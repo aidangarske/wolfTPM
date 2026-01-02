@@ -866,6 +866,493 @@ int wolfTPM2_GetHandles(TPM_HANDLE handle, TPML_HANDLE* handles)
     return handles->count;
 }
 
+#ifdef WOLFTPM_SPDM
+int wolfTPM2_CheckACTransportSupport(WOLFTPM2_DEV* dev, int* supported)
+{
+    int rc;
+    AC_GetCapability_In  in;
+    AC_GetCapability_Out out;
+    TPM_HANDLE testHandle;
+    TPM_HANDLE discoveredHandles[1];
+    word32 handleCount = 0;
+
+    if (dev == NULL || supported == NULL) {
+        return BAD_FUNC_ARG;
+    }
+
+    *supported = 0;
+
+    /* Discover AC handle */
+    rc = wolfTPM2_GetACHandles(dev, discoveredHandles, &handleCount, 1);
+    if (rc == TPM_RC_SUCCESS && handleCount > 0) {
+        /* Use discovered handle */
+        testHandle = discoveredHandles[0];
+    } else {
+        /* Use known AC range handle */
+        testHandle = 0x40000110;
+    }
+
+    /* Probe with AC_GetCapability */
+    XMEMSET(&in, 0, sizeof(in));
+    XMEMSET(&out, 0, sizeof(out));
+    in.ac = testHandle;
+    in.capability = TPM_AT_PVT;
+    in.count = 1;
+
+    rc = TPM2_AC_GetCapability(&in, &out);
+
+    if (rc == TPM_RC_COMMAND_CODE) {
+        /* Transport does not support AC */
+        *supported = 0;
+        return TPM_RC_SUCCESS;
+    }
+    else if (rc == TPM_RC_HANDLE) {
+        /* Transport works, handle doesn't exist */
+        *supported = 1;
+        return TPM_RC_SUCCESS;
+    }
+    else if (rc == TPM_RC_SUCCESS) {
+        /* Transport and AC work */
+        *supported = 1;
+        return TPM_RC_SUCCESS;
+    }
+    else if (rc == TPM_RC_VALUE || rc == 0x184) {
+        /* Transport is ok, got param error */
+        *supported = 1;
+        return TPM_RC_SUCCESS;
+    }
+    else {
+        /* Other error - assume transport issue */
+        *supported = 0;
+        return rc;
+    }
+}
+
+int wolfTPM2_GetACHandles(WOLFTPM2_DEV* dev, TPM_HANDLE* handles,
+    word32* handleCount, word32 maxHandles)
+{
+    int rc;
+    GetCapability_In  in;
+    GetCapability_Out out;
+    word32 totalCount = 0;
+    UINT32 property = HR_AC;  /* Start at AC handle range */
+    TPMI_YES_NO moreData = YES;
+
+    if (dev == NULL || handles == NULL || handleCount == NULL || maxHandles == 0) {
+        return BAD_FUNC_ARG;
+    }
+
+    *handleCount = 0;
+    XMEMSET(handles, 0, maxHandles * sizeof(TPM_HANDLE));
+
+    /* Discovery loop: continue while moreData == YES */
+    while (moreData == YES && totalCount < maxHandles) {
+        TPML_HANDLE* handleList;
+        word32 i;
+
+        XMEMSET(&in, 0, sizeof(in));
+        XMEMSET(&out, 0, sizeof(out));
+        in.capability = TPM_CAP_HANDLES;
+        in.property = property;
+        in.propertyCount = maxHandles - totalCount;  /* Request remaining space */
+
+        rc = TPM2_GetCapability(&in, &out);
+        if (rc != TPM_RC_SUCCESS) {
+        #ifdef DEBUG_WOLFTPM
+            printf("TPM2_GetCapability AC handles failed 0x%x: %s\n", rc,
+                TPM2_GetRCString(rc));
+        #endif
+            break;
+        }
+
+        moreData = out.moreData;
+        handleList = &out.capabilityData.data.handles;
+
+        /* Filter handles: only include AC range handles */
+        for (i = 0; i < handleList->count && totalCount < maxHandles; i++) {
+            if (TPM2_IS_AC_HANDLE(handleList->handle[i])) {
+                handles[totalCount++] = handleList->handle[i];
+            }
+        }
+
+        /* Update property for next iteration (use last handle + 1) */
+        if (handleList->count > 0) {
+            property = handleList->handle[handleList->count - 1] + 1;
+        } else {
+            break;  /* No handles returned, stop */
+        }
+    }
+
+    *handleCount = totalCount;
+
+    #ifdef DEBUG_WOLFTPM
+        printf("wolfTPM2_GetACHandles: Found %d AC handles (moreData=%d)\n",
+            (int)totalCount, (int)moreData);
+    #endif
+
+    return TPM_RC_SUCCESS;
+}
+
+int wolfTPM2_AC_GetCapability(WOLFTPM2_DEV* dev, TPM_HANDLE acHandle,
+    TPMA_AC* capabilities, TPM_AT* acType)
+{
+    int rc;
+    AC_GetCapability_In  in;
+    AC_GetCapability_Out out;
+
+    if (dev == NULL || capabilities == NULL || acType == NULL) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* Validate AC handle is in AC range */
+    if (!TPM2_IS_AC_HANDLE(acHandle)) {
+    #ifdef DEBUG_WOLFTPM
+        printf("wolfTPM2_AC_GetCapability: Invalid AC handle 0x%x\n",
+            (unsigned int)acHandle);
+    #endif
+        return TPM_RC_HANDLE;
+    }
+    /* Exclude permanent handles (TPM_RH_*) which share the same handle type (0x40) as AC handles
+     * Permanent handles are 0x40000000-0x4000010F, AC handles start after that */
+    if (acHandle >= TPM_RH_FIRST && acHandle <= TPM_RH_LAST) {
+    #ifdef DEBUG_WOLFTPM
+        printf("wolfTPM2_AC_GetCapability: Handle 0x%x is a permanent handle, not an AC handle\n",
+            (unsigned int)acHandle);
+    #endif
+        return TPM_RC_HANDLE;
+    }
+
+    XMEMSET(&in, 0, sizeof(in));
+    XMEMSET(&out, 0, sizeof(out));
+    in.ac = acHandle;
+    in.capability = TPM_AT_PVT;  /* Query all capabilities */
+    in.count = 1;  /* Request one capability */
+
+    rc = TPM2_AC_GetCapability(&in, &out);
+    if (rc == TPM_RC_SUCCESS) {
+        /* Use first capability in list */
+        if (out.capabilitiesData.count > 0) {
+            *capabilities = out.capabilitiesData.acCapabilities[0].acCapabilities;
+            *acType = out.capabilitiesData.acCapabilities[0].acType;
+        } else {
+            /* No capabilities returned */
+            *capabilities = 0;
+            *acType = 0;
+        }
+
+    #ifdef DEBUG_WOLFTPM
+        printf("wolfTPM2_AC_GetCapability: AC 0x%x, count=%d, capabilities=0x%x, type=0x%x\n",
+            (unsigned int)acHandle,
+            (int)out.capabilitiesData.count,
+            (unsigned int)*capabilities,
+            (unsigned int)*acType);
+    #endif
+    }
+
+    return rc;
+}
+
+int wolfTPM2_AC_Send(WOLFTPM2_DEV* dev, TPM_HANDLE acHandle,
+    const byte* spdmRequest, word32 reqSz,
+    byte* spdmResponse, word32* respSz, TPM2B_NONCE* nonceTPM)
+{
+    int rc;
+    AC_Send_In  in;
+    AC_Send_Out out;
+    UINT32 maxCommandSize = 0;
+
+    if (dev == NULL || spdmRequest == NULL || spdmResponse == NULL ||
+        respSz == NULL || reqSz == 0) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* Validate AC handle is in AC range */
+    if (!TPM2_IS_AC_HANDLE(acHandle)) {
+    #ifdef DEBUG_WOLFTPM
+        printf("wolfTPM2_AC_Send: Invalid AC handle 0x%x\n",
+            (unsigned int)acHandle);
+    #endif
+        return TPM_RC_HANDLE;
+    }
+    /* Exclude permanent handles (TPM_RH_*) which share the same handle type (0x40) as AC handles */
+    if (acHandle >= TPM_RH_FIRST && acHandle <= TPM_RH_LAST) {
+    #ifdef DEBUG_WOLFTPM
+        printf("wolfTPM2_AC_Send: Handle 0x%x is a permanent handle, not an AC handle\n",
+            (unsigned int)acHandle);
+    #endif
+        return TPM_RC_HANDLE;
+    }
+
+    /* Query TPM_PT_MAX_COMMAND_SIZE if not cached */
+    /* TODO: Cache this value in dev structure for efficiency */
+    {
+        GetCapability_In  capIn;
+        GetCapability_Out capOut;
+        XMEMSET(&capIn, 0, sizeof(capIn));
+        XMEMSET(&capOut, 0, sizeof(capOut));
+        capIn.capability = TPM_CAP_TPM_PROPERTIES;
+        capIn.property = TPM_PT_MAX_COMMAND_SIZE;
+        capIn.propertyCount = 1;
+        rc = TPM2_GetCapability(&capIn, &capOut);
+        if (rc == TPM_RC_SUCCESS) {
+            TPML_TAGGED_TPM_PROPERTY* props = &capOut.capabilityData.data.tpmProperties;
+            if (props->count > 0 && props->tpmProperty[0].property == TPM_PT_MAX_COMMAND_SIZE) {
+                maxCommandSize = props->tpmProperty[0].value;
+            }
+        }
+    }
+
+    /* Validate request size */
+    if (maxCommandSize > 0 && reqSz > maxCommandSize) {
+    #ifdef DEBUG_WOLFTPM
+        printf("wolfTPM2_AC_Send: Request size %d exceeds MAX_COMMAND_SIZE %d\n",
+            (int)reqSz, (int)maxCommandSize);
+    #endif
+        return TPM_RC_SIZE;
+    }
+
+    XMEMSET(&in, 0, sizeof(in));
+    XMEMSET(&out, 0, sizeof(out));
+    /* Set TCG AC_Send structure fields */
+    in.sendObject = acHandle;  /* Use AC handle as sendObject */
+    in.authHandle = TPM_RH_NULL;  /* No authorization session (TPM_ST_NO_SESSIONS) */
+    in.ac = acHandle;
+    in.acDataIn.size = reqSz;
+    if (reqSz > sizeof(in.acDataIn.buffer)) {
+        reqSz = sizeof(in.acDataIn.buffer);
+    }
+    XMEMCPY(in.acDataIn.buffer, spdmRequest, reqSz);
+    in.acDataIn.size = reqSz;
+
+    rc = TPM2_AC_Send(&in, &out);
+    if (rc == TPM_RC_SUCCESS) {
+        word32 responseSize = out.response.data.size;
+
+        /* Check response buffer size */
+        if (responseSize > *respSz) {
+        #ifdef DEBUG_WOLFTPM
+            printf("wolfTPM2_AC_Send: Response size %d exceeds buffer size %d\n",
+                (int)responseSize, (int)*respSz);
+        #endif
+            *respSz = responseSize;
+            return BUFFER_E;
+        }
+
+        /* Copy SPDM response */
+        XMEMCPY(spdmResponse, out.response.data.buffer, responseSize);
+        *respSz = responseSize;
+
+        /* Optionally return nonceTPM */
+        if (nonceTPM != NULL) {
+            XMEMCPY(nonceTPM, &out.response.nonceTPM, sizeof(TPM2B_NONCE));
+        }
+
+    #ifdef DEBUG_WOLFTPM
+        printf("wolfTPM2_AC_Send: AC 0x%x, reqSz=%d, respSz=%d\n",
+            (unsigned int)acHandle, (int)reqSz, (int)responseSize);
+    #endif
+    }
+
+    return rc;
+}
+
+int wolfTPM2_AC_DeriveSessionKey(WOLFTPM2_DEV* dev, TPM_HANDLE acHandle,
+    const byte* spdmSharedSecret, word32 secretSz,
+    const TPM2B_NONCE* nonceTPM, TPM2B_AUTH* sessionKey)
+{
+    int rc;
+    TPM_ALG_ID hashAlg = WOLFTPM2_WRAP_DIGEST;
+    TPM2B_DATA keyIn;
+    TPM2B_NONCE contextU, contextV;
+    int hashDigestSz;
+    byte acHandleBytes[4];
+
+    if (dev == NULL || spdmSharedSecret == NULL || secretSz == 0 ||
+        nonceTPM == NULL || sessionKey == NULL) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* Validate AC handle is in AC range */
+    if (!TPM2_IS_AC_HANDLE(acHandle)) {
+        return TPM_RC_HANDLE;
+    }
+    /* Exclude permanent handles (TPM_RH_*) which share the same handle type (0x40) as AC handles */
+    if (acHandle >= TPM_RH_FIRST && acHandle <= TPM_RH_LAST) {
+        return TPM_RC_HANDLE;
+    }
+
+    hashDigestSz = TPM2_GetHashDigestSize(hashAlg);
+    if (hashDigestSz <= 0 || hashDigestSz > (int)sizeof(sessionKey->buffer)) {
+        return BUFFER_E;
+    }
+
+    /* Set session key size to hash digest size (32 bytes for SHA-256) */
+    sessionKey->size = (UINT16)hashDigestSz;
+
+    /* Prepare key input from shared secret */
+    if (secretSz > sizeof(keyIn.buffer)) {
+        secretSz = sizeof(keyIn.buffer);
+    }
+    keyIn.size = (UINT16)secretSz;
+    XMEMCPY(keyIn.buffer, spdmSharedSecret, secretSz);
+
+    /* Prepare context U: AC handle as 4-byte big-endian */
+    TPM2_Packet_U32ToByteArray(acHandle, acHandleBytes);
+    contextU.size = sizeof(acHandleBytes);
+    XMEMCPY(contextU.buffer, acHandleBytes, contextU.size);
+
+    /* Prepare context V: TPM nonce */
+    contextV.size = nonceTPM->size;
+    if (contextV.size > sizeof(contextV.buffer)) {
+        contextV.size = sizeof(contextV.buffer);
+    }
+    XMEMCPY(contextV.buffer, nonceTPM->buffer, contextV.size);
+
+    /* Derive session key using KDFa with label "SPDM Session Key" */
+    rc = TPM2_KDFa(hashAlg, &keyIn, "SPDM Session Key", &contextU, &contextV,
+                   sessionKey->buffer, sessionKey->size);
+    if (rc < 0) {
+        return rc;
+    }
+    if ((word32)rc != sessionKey->size) {
+        return BUFFER_E;
+    }
+
+    return TPM_RC_SUCCESS;
+}
+
+int wolfTPM2_AC_StartSession(WOLFTPM2_DEV* dev, WOLFTPM2_SESSION* session,
+    TPM_HANDLE acHandle, const TPM2B_AUTH* sessionKey, int encDecAlg)
+{
+    int rc;
+    StartAuthSession_In  authSesIn;
+    StartAuthSession_Out authSesOut;
+    TPMI_ALG_HASH authHash = WOLFTPM2_WRAP_DIGEST;
+    int hashDigestSz;
+
+    if (dev == NULL || session == NULL || sessionKey == NULL) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* Validate AC handle is in AC range */
+    if (!TPM2_IS_AC_HANDLE(acHandle)) {
+        return TPM_RC_HANDLE;
+    }
+    /* Exclude permanent handles (TPM_RH_*) which share the same handle type (0x40) as AC handles */
+    if (acHandle >= TPM_RH_FIRST && acHandle <= TPM_RH_LAST) {
+        return TPM_RC_HANDLE;
+    }
+
+    /* Validate encryption algorithm */
+    if (encDecAlg != TPM_ALG_CFB && encDecAlg != TPM_ALG_XOR && encDecAlg != TPM_ALG_NULL) {
+        return BAD_FUNC_ARG;
+    }
+
+    XMEMSET(session, 0, sizeof(WOLFTPM2_SESSION));
+    XMEMSET(&authSesIn, 0, sizeof(authSesIn));
+
+    authSesIn.authHash = authHash;
+    hashDigestSz = TPM2_GetHashDigestSize(authHash);
+    if (hashDigestSz <= 0 ||
+        hashDigestSz > (int)sizeof(authSesIn.nonceCaller.buffer)) {
+        return BUFFER_E;
+    }
+
+    /* No tpmKey for AC sessions - use NULL */
+    wolfTPM2_SetAuthPassword(dev, 0, NULL);
+    authSesIn.tpmKey = (TPMI_DH_OBJECT)TPM_RH_NULL;
+
+    /* Bind session to AC handle */
+    authSesIn.bind = (TPMI_DH_ENTITY)acHandle;
+
+    /* Set session type to HMAC */
+    authSesIn.sessionType = TPM_SE_HMAC;
+
+    /* Set encryption algorithm */
+    if (encDecAlg == TPM_ALG_CFB) {
+        authSesIn.symmetric.algorithm = TPM_ALG_AES;
+        authSesIn.symmetric.keyBits.aes = 128;
+        authSesIn.symmetric.mode.aes = TPM_ALG_CFB;
+    }
+    else if (encDecAlg == TPM_ALG_XOR) {
+        authSesIn.symmetric.algorithm = TPM_ALG_XOR;
+        authSesIn.symmetric.keyBits.xorr = TPM_ALG_SHA256;
+        authSesIn.symmetric.mode.sym = TPM_ALG_NULL;
+    }
+    else {
+        authSesIn.symmetric.algorithm = TPM_ALG_NULL;
+    }
+
+    /* Generate caller nonce */
+    authSesIn.nonceCaller.size = hashDigestSz;
+    rc = TPM2_GetNonceNoLock(authSesIn.nonceCaller.buffer,
+                       authSesIn.nonceCaller.size);
+    if (rc < 0) {
+        return rc;
+    }
+
+    /* Set salt from session key (unencrypted since tpmKey is NULL) */
+    authSesIn.encryptedSalt.size = sessionKey->size;
+    if (authSesIn.encryptedSalt.size > sizeof(authSesIn.encryptedSalt.secret)) {
+        authSesIn.encryptedSalt.size = sizeof(authSesIn.encryptedSalt.secret);
+    }
+    XMEMCPY(authSesIn.encryptedSalt.secret, sessionKey->buffer, authSesIn.encryptedSalt.size);
+
+    /* Store salt in session structure for later use */
+    session->salt.size = authSesIn.encryptedSalt.size;
+    XMEMCPY(session->salt.buffer, authSesIn.encryptedSalt.secret, session->salt.size);
+
+    /* Call TPM2_StartAuthSession */
+    rc = TPM2_StartAuthSession(&authSesIn, &authSesOut);
+    if (rc == TPM_RC_SUCCESS) {
+        session->handle.hndl = authSesOut.sessionHandle;
+        XMEMCPY(session->nonceTPM.buffer, authSesOut.nonceTPM.buffer, authSesOut.nonceTPM.size);
+        session->nonceTPM.size = authSesOut.nonceTPM.size;
+    }
+
+    return rc;
+}
+
+int wolfTPM2_SPDM_EstablishSecureChannel(WOLFTPM2_DEV* dev, TPM_HANDLE acHandle,
+    WOLFTPM2_SESSION* session, const byte* spdmSharedSecret, word32 secretSz,
+    const TPM2B_NONCE* nonceTPM)
+{
+    int rc;
+    TPM2B_AUTH sessionKey;
+
+    if (dev == NULL || session == NULL || spdmSharedSecret == NULL ||
+        secretSz == 0 || nonceTPM == NULL) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* Validate AC handle is in AC range */
+    if (!TPM2_IS_AC_HANDLE(acHandle)) {
+        return TPM_RC_HANDLE;
+    }
+    /* Exclude permanent handles (TPM_RH_*) which share the same handle type (0x40) as AC handles */
+    if (acHandle >= TPM_RH_FIRST && acHandle <= TPM_RH_LAST) {
+        return TPM_RC_HANDLE;
+    }
+
+    XMEMSET(&sessionKey, 0, sizeof(sessionKey));
+
+    /* Step 1: Derive session key from SPDM shared secret */
+    rc = wolfTPM2_AC_DeriveSessionKey(dev, acHandle, spdmSharedSecret, secretSz,
+                                      nonceTPM, &sessionKey);
+    if (rc != TPM_RC_SUCCESS) {
+        return rc;
+    }
+
+    /* Step 2: Create AC-bound session with derived key */
+    rc = wolfTPM2_AC_StartSession(dev, session, acHandle, &sessionKey, TPM_ALG_CFB);
+    if (rc != TPM_RC_SUCCESS) {
+        return rc;
+    }
+
+    return TPM_RC_SUCCESS;
+}
+#endif /* WOLFTPM_SPDM */
+
 int wolfTPM2_UnsetAuth(WOLFTPM2_DEV* dev, int index)
 {
     TPM2_AUTH_SESSION* session;

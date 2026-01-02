@@ -145,6 +145,10 @@ typedef struct WOLFTPM2_CAPS {
     word16 fips140_2 : 1; /* using FIPS mode */
     word16 cc_eal4   : 1; /* Common Criteria EAL4+ */
     word16 req_wait_state : 1; /* requires SPI wait state */
+#ifdef WOLFTPM_SPDM
+    word32 acHandleCount;  /* Number of AC handles discovered */
+    TPM_HANDLE acHandles[16];  /* AC handles (max 16) */
+#endif
 } WOLFTPM2_CAPS;
 
 
@@ -394,6 +398,279 @@ WOLFTPM_API int wolfTPM2_GetCapabilities(WOLFTPM2_DEV* dev, WOLFTPM2_CAPS* caps)
 */
 WOLFTPM_API int wolfTPM2_GetHandles(TPM_HANDLE handle, TPML_HANDLE* handles);
 
+#ifdef WOLFTPM_SPDM
+/*!
+    \ingroup wolfTPM2_Wrappers
+    \brief Check if transport layer supports Authenticated Controller (AC) commands
+    \note This function probes the transport layer to detect if AC commands (0x19E/0x19F)
+          are blocked by kernel drivers. If blocked, suggests using direct SPI/I2C or swtpm.
+
+    \return TPM_RC_SUCCESS: check completed (see supported parameter)
+    \return BAD_FUNC_ARG: invalid parameters
+
+    \param dev pointer to a WOLFTPM2_DEV structure
+    \param supported output parameter: 1 if AC commands are supported, 0 if blocked
+
+    _Example_
+    \code
+    int rc, supported;
+    rc = wolfTPM2_CheckACTransportSupport(&dev, &supported);
+    if (rc == TPM_RC_SUCCESS) {
+        if (supported) {
+            // AC commands are supported
+        } else {
+            // Kernel blocks AC commands - use direct SPI/I2C or upgrade kernel
+        }
+    }
+    \endcode
+
+    \sa wolfTPM2_GetACHandles
+*/
+WOLFTPM_API int wolfTPM2_CheckACTransportSupport(WOLFTPM2_DEV* dev, int* supported);
+
+/*!
+    \ingroup wolfTPM2_Wrappers
+    \brief Discover all Authenticated Controller (AC) handles on the TPM
+    \note AC handles are dynamic (range 0x40xxxxxx) and cannot be hardcoded.
+          This function implements a discovery loop with moreData handling to find
+          all available AC handles. Multiple ACs may exist on a single TPM.
+
+    \return TPM_RC_SUCCESS: discovery completed (check handleCount)
+    \return BAD_FUNC_ARG: invalid parameters
+    \return BUFFER_E: maxHandles too small (more ACs exist)
+
+    \param dev pointer to a WOLFTPM2_DEV structure
+    \param handles output array to store discovered AC handles
+    \param handleCount output parameter: number of AC handles found
+    \param maxHandles maximum number of handles to return
+
+    _Example_
+    \code
+    TPM_HANDLE acHandles[16];
+    word32 count = 0;
+    rc = wolfTPM2_GetACHandles(&dev, acHandles, &count, 16);
+    if (rc == TPM_RC_SUCCESS && count > 0) {
+        printf("Found %d AC handles\n", count);
+        for (word32 i = 0; i < count; i++) {
+            printf("  AC handle: 0x%x\n", acHandles[i]);
+        }
+    }
+    \endcode
+
+    \sa wolfTPM2_AC_GetCapability
+    \sa wolfTPM2_AC_Send
+*/
+WOLFTPM_API int wolfTPM2_GetACHandles(WOLFTPM2_DEV* dev, TPM_HANDLE* handles,
+    word32* handleCount, word32 maxHandles);
+
+/*!
+    \ingroup wolfTPM2_Wrappers
+    \brief Query capabilities of an Authenticated Controller (AC)
+    \note Returns AC capability bits (SPDM version, secure messages, bus encryption)
+          and attachment type (private or public controller).
+
+    \return TPM_RC_SUCCESS: capability query successful
+    \return TPM_RC_HANDLE: invalid AC handle
+    \return TPM_RC_COMMAND_CODE: transport/kernel blocks AC commands
+    \return BAD_FUNC_ARG: invalid parameters
+
+    \param dev pointer to a WOLFTPM2_DEV structure
+    \param acHandle AC handle to query (must be in range 0x40000000 - 0x40FFFFFF)
+    \param capabilities output: AC capability bits (TPMA_AC)
+    \param acType output: attachment type (TPM_AT_PVT or TPM_AT_PUB)
+
+    _Example_
+    \code
+    TPMA_AC caps;
+    TPM_AT type;
+    rc = wolfTPM2_AC_GetCapability(&dev, acHandle, &caps, &type);
+    if (rc == TPM_RC_SUCCESS) {
+        if (caps & TPM_AC_SPDM_12) {
+            printf("AC supports SPDM 1.2\n");
+        }
+        if (caps & TPM_AC_BUS_ENCRYPTION) {
+            printf("AC supports bus encryption\n");
+        }
+    }
+    \endcode
+
+    \sa wolfTPM2_GetACHandles
+    \sa wolfTPM2_AC_Send
+*/
+WOLFTPM_API int wolfTPM2_AC_GetCapability(WOLFTPM2_DEV* dev, TPM_HANDLE acHandle,
+    TPMA_AC* capabilities, TPM_AT* acType);
+
+/*!
+    \ingroup wolfTPM2_Wrappers
+    \brief Send SPDM message through Authenticated Controller (AC) tunnel
+    \note wolfTPM acts as a transport "pipe" for SPDM messages. The full SPDM protocol
+          state machine (GET_VERSION, GET_CAPABILITIES, KEY_EXCHANGE) should be handled
+          by libspdm or a similar library. This function only tunnels raw SPDM messages.
+
+    \return TPM_RC_SUCCESS: SPDM message sent and response received
+    \return TPM_RC_HANDLE: invalid AC handle
+    \return TPM_RC_SIZE: request exceeds TPM_PT_MAX_COMMAND_SIZE
+    \return TPM_RC_COMMAND_CODE: transport/kernel blocks AC commands
+    \return BUFFER_E: response buffer too small
+    \return BAD_FUNC_ARG: invalid parameters
+
+    \param dev pointer to a WOLFTPM2_DEV structure
+    \param acHandle AC handle to use (must be in range 0x40000000 - 0x40FFFFFF)
+    \param spdmRequest input: raw SPDM request message
+    \param reqSz size of SPDM request in bytes
+    \param spdmResponse output: raw SPDM response message
+    \param respSz input/output: size of response buffer / actual response size
+    \param nonceTPM output (optional): TPM-generated nonce for session freshness
+
+    _Example_
+    \code
+    byte spdmReq[64];
+    byte spdmResp[1024];
+    word32 respSz = sizeof(spdmResp);
+    TPM2B_NONCE nonce;
+    
+    // Build SPDM GET_VERSION request (example)
+    // ... populate spdmReq ...
+    
+    rc = wolfTPM2_AC_Send(&dev, acHandle, spdmReq, sizeof(spdmReq),
+                          spdmResp, &respSz, &nonce);
+    if (rc == TPM_RC_SUCCESS) {
+        // Process SPDM response
+        // Use nonce for KDF context if establishing secure channel
+    }
+    \endcode
+
+    \sa wolfTPM2_GetACHandles
+    \sa wolfTPM2_AC_GetCapability
+    \sa wolfTPM2_AC_DeriveSessionKey
+*/
+WOLFTPM_API int wolfTPM2_AC_Send(WOLFTPM2_DEV* dev, TPM_HANDLE acHandle,
+    const byte* spdmRequest, word32 reqSz,
+    byte* spdmResponse, word32* respSz, TPM2B_NONCE* nonceTPM);
+
+/*!
+    \ingroup wolfTPM2_Wrappers
+    \brief Derive session key from SPDM shared secret using TPM KDF
+    \note This function performs TPM-specific key derivation from the shared secret
+          obtained from an SPDM KEY_EXCHANGE handshake (handled by libspdm).
+          The derived key is used as the session salt for AC-bound sessions.
+
+    \return TPM_RC_SUCCESS: session key derived successfully
+    \return TPM_RC_HANDLE: invalid AC handle
+    \return BAD_FUNC_ARG: invalid parameters
+
+    \param dev pointer to a WOLFTPM2_DEV structure
+    \param acHandle AC handle (used in KDF context)
+    \param spdmSharedSecret input: shared secret from SPDM KEY_EXCHANGE
+    \param secretSz size of shared secret in bytes
+    \param nonceTPM input: TPM nonce from AC_Send response (used in KDF context)
+    \param sessionKey output: derived session key (TPM2B_AUTH, 32 bytes for SHA-256)
+
+    _Example_
+    \code
+    TPM2B_AUTH sessionKey;
+    TPM2B_NONCE nonce;
+    byte sharedSecret[32];  // From libspdm KEY_EXCHANGE
+    
+    // Get nonce from previous AC_Send call
+    // ... call wolfTPM2_AC_Send with nonceTPM parameter ...
+    
+    rc = wolfTPM2_AC_DeriveSessionKey(&dev, acHandle, sharedSecret,
+                                      sizeof(sharedSecret), &nonce, &sessionKey);
+    if (rc == TPM_RC_SUCCESS) {
+        // Use sessionKey as salt for AC-bound session
+    }
+    \endcode
+
+    \sa wolfTPM2_AC_Send
+    \sa wolfTPM2_AC_StartSession
+    \sa wolfTPM2_SPDM_EstablishSecureChannel
+*/
+WOLFTPM_API int wolfTPM2_AC_DeriveSessionKey(WOLFTPM2_DEV* dev, TPM_HANDLE acHandle,
+    const byte* spdmSharedSecret, word32 secretSz,
+    const TPM2B_NONCE* nonceTPM, TPM2B_AUTH* sessionKey);
+
+/*!
+    \ingroup wolfTPM2_Wrappers
+    \brief Create an AC-bound session for bus encryption
+    \note Creates a TPM session bound to an AC handle using the SPDM-derived session key
+          as the salt. The session supports parameter encryption/decryption for bus encryption.
+
+    \return TPM_RC_SUCCESS: session created successfully
+    \return TPM_RC_HANDLE: invalid AC handle
+    \return BAD_FUNC_ARG: invalid parameters
+
+    \param dev pointer to a WOLFTPM2_DEV structure
+    \param session output: created session structure
+    \param acHandle AC handle to bind session to
+    \param sessionKey input: derived session key from wolfTPM2_AC_DeriveSessionKey
+    \param encDecAlg encryption algorithm (TPM_ALG_CFB or TPM_ALG_XOR)
+
+    _Example_
+    \code
+    WOLFTPM2_SESSION session;
+    TPM2B_AUTH sessionKey;  // From wolfTPM2_AC_DeriveSessionKey
+    
+    rc = wolfTPM2_AC_StartSession(&dev, &session, acHandle, &sessionKey, TPM_ALG_CFB);
+    if (rc == TPM_RC_SUCCESS) {
+        // Session ready for encrypted TPM commands
+        // Use session with wolfTPM2_SetAuthSession
+    }
+    \endcode
+
+    \sa wolfTPM2_AC_DeriveSessionKey
+    \sa wolfTPM2_SPDM_EstablishSecureChannel
+    \sa wolfTPM2_SetAuthSession
+*/
+WOLFTPM_API int wolfTPM2_AC_StartSession(WOLFTPM2_DEV* dev, WOLFTPM2_SESSION* session,
+    TPM_HANDLE acHandle, const TPM2B_AUTH* sessionKey, int encDecAlg);
+
+/*!
+    \ingroup wolfTPM2_Wrappers
+    \brief Complete SPDM handshake and establish secure channel (convenience API)
+    \note This is a convenience wrapper that combines AC capability query, session key
+          derivation, and session creation. The SPDM handshake itself (GET_VERSION,
+          GET_CAPABILITIES, KEY_EXCHANGE) must be performed by libspdm using
+          wolfTPM2_AC_Send() to tunnel messages.
+
+    \return TPM_RC_SUCCESS: secure channel established
+    \return TPM_RC_HANDLE: invalid AC handle
+    \return BAD_FUNC_ARG: invalid parameters
+
+    \param dev pointer to a WOLFTPM2_DEV structure
+    \param acHandle AC handle to use
+    \param session output: created session structure
+    \param spdmSharedSecret input: shared secret from SPDM KEY_EXCHANGE (libspdm)
+    \param secretSz size of shared secret in bytes
+    \param nonceTPM input: TPM nonce from AC_Send response
+
+    _Example_
+    \code
+    WOLFTPM2_SESSION session;
+    byte sharedSecret[32];  // From libspdm after KEY_EXCHANGE
+    TPM2B_NONCE nonce;      // From wolfTPM2_AC_Send
+    
+    // Perform SPDM handshake using libspdm + wolfTPM2_AC_Send
+    // ... GET_VERSION, GET_CAPABILITIES, KEY_EXCHANGE ...
+    
+    // Establish secure channel
+    rc = wolfTPM2_SPDM_EstablishSecureChannel(&dev, acHandle, &session,
+                                              sharedSecret, sizeof(sharedSecret), &nonce);
+    if (rc == TPM_RC_SUCCESS) {
+        // Session ready for encrypted TPM commands
+    }
+    \endcode
+
+    \sa wolfTPM2_AC_GetCapability
+    \sa wolfTPM2_AC_DeriveSessionKey
+    \sa wolfTPM2_AC_StartSession
+    \sa wolfTPM2_AC_Send
+*/
+WOLFTPM_API int wolfTPM2_SPDM_EstablishSecureChannel(WOLFTPM2_DEV* dev,
+    TPM_HANDLE acHandle, WOLFTPM2_SESSION* session,
+    const byte* spdmSharedSecret, word32 secretSz,
+    const TPM2B_NONCE* nonceTPM);
+#endif /* WOLFTPM_SPDM */
 
 /*!
     \ingroup wolfTPM2_Wrappers

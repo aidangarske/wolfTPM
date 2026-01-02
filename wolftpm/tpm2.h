@@ -248,6 +248,10 @@ typedef enum {
     TPM_CC_CreateLoaded             = 0x00000191,
     TPM_CC_PolicyAuthorizeNV        = 0x00000192,
     TPM_CC_EncryptDecrypt2          = 0x00000193,
+#ifdef WOLFTPM_SPDM
+    TPM_CC_AC_GetCapability         = 0x00000194,  /* Authenticated Controller GetCapability (TCG v1.84) */
+    TPM_CC_AC_Send                  = 0x00000195,  /* Authenticated Controller Send (TCG v1.84) */
+#endif
     TPM_CC_LAST                     = TPM_CC_EncryptDecrypt2,
 
     CC_VEND                         = 0x20000000,
@@ -498,6 +502,28 @@ typedef enum {
 } TPM_CAP_T;
 typedef UINT32 TPM_CAP;
 
+#ifdef WOLFTPM_SPDM
+/* Authenticated Controller (AC) Capabilities (TCG v1.84) */
+typedef enum {
+    TPM_AC_SPDM_10          = 0x00000001,  /* SPDM 1.0 support */
+    TPM_AC_SPDM_11          = 0x00000002,  /* SPDM 1.1 support */
+    TPM_AC_SPDM_12          = 0x00000004,  /* SPDM 1.2 support */
+    TPM_AC_SECURE_MESSAGES  = 0x00000008,  /* Secure messages support */
+    TPM_AC_BUS_ENCRYPTION   = 0x00000010,  /* Bus encryption support */
+} TPM_AC_T;
+typedef UINT32 TPM_AC;
+
+/* Attachment Type (AC) */
+typedef enum {
+    TPM_AT_PVT              = 0x00000001,  /* Private controller */
+    TPM_AT_PUB              = 0x00000002,  /* Public controller */
+} TPM_AT_T;
+typedef UINT32 TPM_AT;
+
+/* AC Capability Attributes */
+typedef UINT32 TPMA_AC;
+#endif
+
 /* Property Tag */
 typedef enum {
     TPM_PT_NONE    = 0x00000000,
@@ -632,6 +658,7 @@ typedef enum {
     TPM_HT_POLICY_SESSION   = 0x03,
     TPM_HT_ACTIVE_SESSION   = 0x03,
     TPM_HT_PERMANENT        = 0x40,
+    TPM_HT_AC               = 0x40,  /* Authenticated Controller (TCG v1.84) */
     TPM_HT_TRANSIENT        = 0x80,
     TPM_HT_PERSISTENT       = 0x81,
 } TPM_HT_T;
@@ -674,6 +701,12 @@ typedef UINT32 TPM_RH;
 #define HR_PERSISTENT        ((UINT32)TPM_HT_PERSISTENT << HR_SHIFT)
 #define HR_NV_INDEX          ((UINT32)TPM_HT_NV_INDEX << HR_SHIFT)
 #define HR_PERMANENT         ((UINT32)TPM_HT_PERMANENT << HR_SHIFT)
+#ifdef WOLFTPM_SPDM
+#define HR_AC                ((UINT32)TPM_HT_AC << HR_SHIFT)  /* 0x40000000 */
+#define AC_HANDLE_FIRST      (HR_AC + 0)
+#define AC_HANDLE_LAST       (HR_AC + 0x00FFFFFFUL)
+#define TPM2_IS_AC_HANDLE(h) (((h) & HR_RANGE_MASK) == HR_AC)
+#endif
 #define PCR_FIRST            (HR_PCR + 0)
 #define PCR_LAST             (PCR_FIRST + IMPLEMENTATION_PCR-1)
 #define HMAC_SESSION_FIRST   (HR_HMAC_SESSION + 0)
@@ -806,6 +839,9 @@ typedef TPM_HANDLE TPMI_RH_CLEAR;
 typedef TPM_HANDLE TPMI_RH_NV_AUTH;
 typedef TPM_HANDLE TPMI_RH_LOCKOUT;
 typedef TPM_HANDLE TPMI_RH_NV_INDEX;
+#ifdef WOLFTPM_SPDM
+typedef TPM_HANDLE TPMI_DH_AC;  /* Authenticated Controller handle */
+#endif
 
 typedef TPM_ALG_ID TPMI_ALG_HASH;
 typedef TPM_ALG_ID TPMI_ALG_ASYM;
@@ -1108,6 +1144,37 @@ typedef struct TPMS_NV_CERTIFY_INFO {
     TPM2B_MAX_NV_BUFFER nvContents;
 } TPMS_NV_CERTIFY_INFO;
 
+#ifdef WOLFTPM_SPDM
+/* Authenticated Controller (AC) Structures (TCG v1.84) */
+
+/* AC Output - Contains SPDM response data */
+typedef struct TPMS_AC_OUTPUT {
+    TPM_ST tag;              /* Structure tag */
+    TPM2B_NONCE nonceTPM;    /* TPM-generated nonce for session freshness */
+    TPM2B_MAX_BUFFER data;   /* Raw SPDM response data */
+} TPMS_AC_OUTPUT;
+
+/* AC Capabilities - Describes AC capabilities and type */
+typedef struct TPMS_AC_CAPABILITIES {
+    TPMA_AC acCapabilities;  /* UINT32 bit field (big-endian) - AC capability flags */
+    TPM_AT acType;           /* Attachment type (PVT or PUB) */
+} TPMS_AC_CAPABILITIES;
+
+/* AC Capabilities List */
+#ifndef MAX_AC_CAPABILITIES
+#define MAX_AC_CAPABILITIES 8  /* Reasonable default, matches TCG simulator */
+#endif
+typedef struct TPML_AC_CAPABILITIES {
+    UINT32 count;                                    /* Number of capabilities */
+    TPMS_AC_CAPABILITIES acCapabilities[MAX_AC_CAPABILITIES];  /* Capability list */
+} TPML_AC_CAPABILITIES;
+
+/* Note: TPM2B_MAX_BUFFER is limited by TPM_PT_MAX_COMMAND_SIZE.
+ * Applications should query TPM_PT_MAX_COMMAND_SIZE before sending
+ * SPDM requests via AC_Send to ensure buffer size constraints are met.
+ */
+#define AC_MAX_SPDM_REQUEST_SIZE_CHECK  /* Check against TPM_PT_MAX_COMMAND_SIZE */
+#endif
 
 typedef TPM_ST TPMI_ST_ATTEST;
 typedef union TPMU_ATTEST {
@@ -1913,6 +1980,32 @@ typedef struct {
 WOLFTPM_API TPM_RC TPM2_GetCapability(GetCapability_In* in,
     GetCapability_Out* out);
 
+#ifdef WOLFTPM_SPDM
+/* Authenticated Controller (AC) Commands (TCG v1.84) */
+
+typedef struct {
+    TPMI_DH_AC ac;             /* AC handle */
+    TPM_AT capability;         /* Capability type to query */
+    UINT32 count;              /* Number of capabilities to return */
+} AC_GetCapability_In;
+typedef struct {
+    TPMI_YES_NO moreData;      /* YES if more capabilities available */
+    TPML_AC_CAPABILITIES capabilitiesData;  /* List of AC capabilities */
+} AC_GetCapability_Out;
+WOLFTPM_API TPM_RC TPM2_AC_GetCapability(AC_GetCapability_In* in,
+    AC_GetCapability_Out* out);
+
+typedef struct {
+    TPMI_DH_OBJECT sendObject;  /* Object handle (typically AC handle) */
+    TPMI_RH_NV_AUTH authHandle; /* Authorization handle (TPM_RH_OWNER or TPM_RH_PLATFORM) */
+    TPMI_DH_AC ac;              /* AC handle */
+    TPM2B_MAX_BUFFER acDataIn;  /* SPDM request message (payload) */
+} AC_Send_In;
+typedef struct {
+    TPMS_AC_OUTPUT response;    /* AC output with SPDM response */
+} AC_Send_Out;
+WOLFTPM_API TPM_RC TPM2_AC_Send(AC_Send_In* in, AC_Send_Out* out);
+#endif
 
 typedef struct {
     TPMI_YES_NO fullTest;
