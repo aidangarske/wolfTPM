@@ -22,10 +22,21 @@ AC_CANONICAL_HOST
 AC_CANONICAL_TARGET
 AC_CONFIG_MACRO_DIR([m4])
 
-# Check for C11 standard support (required for TCG v1.84 spec constants)
-AC_PROG_CC_C99
-AS_IF([test "x$ac_cv_prog_cc_c99" = "xno"],
-    [AC_MSG_WARN([C99/C11 support not detected. TCG v1.84 features may require C11.])]
+# Check for C99/C11 standard support (required for TCG v1.84 spec constants)
+# Note: Modern compilers support C99 by default, AC_PROG_CC handles this
+AC_MSG_CHECKING([for C99/C11 support])
+AC_COMPILE_IFELSE(
+    [AC_LANG_PROGRAM([[
+        /* Test C99 features */
+        #if __STDC_VERSION__ < 199901L
+        #error "C99 support required"
+        #endif
+    ]], [[
+        /* Empty body */
+    ]])],
+    [AC_MSG_RESULT([yes])],
+    [AC_MSG_RESULT([no])
+     AC_MSG_WARN([C99/C11 support not detected. TCG v1.84 features may require C99/C11.])]
 )
 
 AM_INIT_AUTOMAKE([1.11 -Wall -Werror -Wno-portability foreign tar-ustar subdir-objects no-define color-tests])
@@ -680,69 +691,4 @@ echo "   * Nuvoton NPCT75x:           $ENABLED_NUVOTON"
 
 echo "   * Runtime Module Detection:  $ENABLED_AUTODETECT"
 echo "   * Firmware Upgrade Support:  $ENABLED_FIRMWARE"
-
-        if [[[ $noequalsign == _* ]]] ;
-        then
-            ignoresys=yes
-            echo "#ifndef WOLFSSL_OPTIONS_IGNORE_SYS" >> $OPTION_FILE
-        fi
-
-        noarg=`echo $defonly | sed 's/=.*//'`
-        echo "#undef  $noarg" >> $OPTION_FILE
-        echo "#define $noequalsign" >> $OPTION_FILE
-
-        if test "$ignoresys" = "yes"
-        then
-            echo "#endif" >> $OPTION_FILE
-        fi
-
-        echo "" >> $OPTION_FILE
-    else
-        echo "option w/o begin -D is $option, not saving to $OPTION_FILE"
-    fi
-done
-
-echo "" >> $OPTION_FILE
-echo "#ifdef __cplusplus" >> $OPTION_FILE
-echo "}" >> $OPTION_FILE
-echo "#endif" >> $OPTION_FILE
-echo "" >> $OPTION_FILE
-echo "" >> $OPTION_FILE
-echo "#endif /* WOLFMTPM_OPTIONS_H */" >> $OPTION_FILE
-echo "" >> $OPTION_FILE
-echo
-
-
-# output config summary
-echo "---"
-echo "Configuration summary for $PACKAGE_NAME version $VERSION"
-echo ""
-echo "   * Installation prefix:       $prefix"
-echo "   * System type:               $host_vendor-$host_os"
-echo "   * Host CPU:                  $host_cpu"
-echo "   * C Compiler:                $CC"
-echo "   * C Flags:                   $CFLAGS"
-echo "   * CPP Flags:                 $CPPFLAGS"
-echo "   * Linker Flags:              $LDFLAGS"
-echo "   * LIB Flags:                 $LIB"
-
-echo "   * Wrappers:                  $ENABLED_WRAPPER"
-echo "   * Examples:                  $ENABLED_EXAMPLES"
-echo "   * wolfCrypt:                 $ENABLED_WOLFCRYPT"
-echo "   * Advanced IO:               $ENABLED_ADVIO"
-echo "   * I2C:                       $ENABLED_I2C"
-echo "   * Linux kernel TPM device:   $ENABLED_DEVTPM"
-echo "   * SWTPM:                     $ENABLED_SWTPM"
-if test "x$ENABLED_SWTPM" = "xyes"; then
-    echo "   * SWTPM Port:                 $SWTPM_PORT"
-fi
-echo "   * WINAPI:                    $ENABLED_WINAPI"
-echo "   * TIS/SPI Check Wait State:  $ENABLED_CHECKWAITSTATE"
-
-echo "   * Infineon SLB967X           $ENABLED_INFINEON"
-echo "   * STM ST33:                  $ENABLED_ST"
-echo "   * Microchip ATTPM20:         $ENABLED_MICROCHIP"
-echo "   * Nuvoton NPCT75x:           $ENABLED_NUVOTON"
-
-echo "   * Runtime Module Detection:  $ENABLED_AUTODETECT"
-echo "   * Firmware Upgrade Support:  $ENABLED_FIRMWARE"
+echo "   * SPDM AC Support:            $ENABLED_SPDM"

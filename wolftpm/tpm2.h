@@ -1981,7 +1981,29 @@ WOLFTPM_API TPM_RC TPM2_GetCapability(GetCapability_In* in,
     GetCapability_Out* out);
 
 #ifdef WOLFTPM_SPDM
-/* Authenticated Controller (AC) Commands (TCG v1.84) */
+/* Authenticated Controller (AC) Commands (TCG v1.84)
+ *
+ * wolfTPM SPDM/AC Implementation Status:
+ *
+ * IMPLEMENTED:
+ *   - TPM_CC_AC_GetCapability (0x194): Query AC capabilities
+ *   - TPM_CC_AC_Send (0x195): Send SPDM messages to AC
+ *
+ * NOT YET IMPLEMENTED (higher-level policy commands):
+ *   - TPM_CC_Policy_AC_SendSelect (0x196): Policy command for AC_Send
+ *   - TPM_CC_PolicyTransportSPDM (0x1A1): SPDM transport policy
+ *   - TPM_CAP_SPDM_SESSION_INFO: SPDM session info capability
+ *
+ * TESTING NOTES:
+ *   TCG TPM Simulator:
+ *   - AC commands are disabled by default (CC_AC_GetCapability = CC_NO, CC_AC_Send = CC_NO)
+ *   - Enabling requires modifying TpmProfile_CommandList.h and rebuilding
+ *   - Even when enabled, simulator provides stub implementations:
+ *     * AC_GetCapability: Returns hardcoded capabilities (works for testing)
+ *     * AC_Send: Returns dummy data {TPM_AT_ERROR, TPM_AE_NONE} (stub only)
+ *   - Simulator requires startup commands on platform interface (port 2322)
+ *   - Full SPDM protocol testing requires hardware TPM with v1.84 firmware
+ */
 
 typedef struct {
     TPMI_DH_AC ac;             /* AC handle */

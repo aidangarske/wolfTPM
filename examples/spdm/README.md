@@ -7,7 +7,11 @@ This directory contains examples demonstrating SPDM (Security Protocol and Data 
 The SPDM examples demonstrate how to use wolfTPM to interact with TPM Authenticated Controllers, which enable secure communication channels between the host and peripheral devices (NICs, GPUs, etc.) using the SPDM protocol.
 
 **Important Notes:**
-- **TCG TPM Simulator is currently the only usable simulator for testing AC commands**
+- **TCG TPM Simulator AC Command Status:**
+  - AC commands (`AC_GetCapability`, `AC_Send`) are **disabled by default** in TCG simulator (`CC_AC_GetCapability = CC_NO`, `CC_AC_Send = CC_NO`)
+  - Enabling them requires modifying `TpmProfile_CommandList.h` and rebuilding the simulator
+  - Even when enabled, the simulator provides **stub implementations** for testing command interface only
+  - The simulator requires **startup commands** on platform interface (port 2322) before command interface works
 - **swtpm does NOT support AC commands** - it will return `TPM_RC_COMMAND_CODE` for AC commands
 - **For real SPDM support on hardware TPMs**, contact **support@wolfssl.com**
 - These examples focus on **transport layer validation** (command formatting) rather than full SPDM protocol implementation
@@ -55,8 +59,11 @@ The SPDM examples demonstrate how to use wolfTPM to interact with TPM Authentica
 - ✅ Command marshalling/unmarshalling
 
 **What Doesn't Work / Limitations:**
-- ⚠️ **TCG Simulator doesn't implement SPDM protocol logic** - it accepts commands but returns empty/static responses
-- ⚠️ **AC_Send responses are empty** - simulator limitation, not a bug
+- ⚠️ **TCG Simulator AC commands disabled by default** - returns `TPM_RC_COMMAND_CODE` unless enabled in build
+- ⚠️ **TCG Simulator doesn't implement SPDM protocol logic** - even when enabled, provides stub implementations
+- ⚠️ **AC_Send returns dummy data** - `AcSendObject()` always returns `{TPM_AT_ERROR, TPM_AE_NONE}` (simulator limitation)
+- ⚠️ **AC handle discovery may return permanent handles** - simulator AC handle `0x40000001` overlaps with permanent handle range
+- ⚠️ **Requires startup commands** - TCG simulator needs power-up/startup on port 2322 before port 2321 works
 
 **Why:**
 - TCG Simulator validates command structure but doesn't process SPDM messages
@@ -114,6 +121,68 @@ The SPDM examples demonstrate how to use wolfTPM to interact with TPM Authentica
 - Secure channel needs real shared secret from SPDM KEY_EXCHANGE phase
 - TCG Simulator accepts commands but doesn't process SPDM protocol
 - For production use, integrate with libspdm for complete SPDM handshake
+
+## TCG Simulator Setup
+
+### Enabling AC Commands in TCG Simulator
+
+The TCG TPM reference simulator has AC commands **disabled by default**. To enable them for testing:
+
+1. **Edit the command profile:**
+   ```bash
+   # In tcg-tpm-reference/TPMCmd/TpmConfiguration/TpmConfiguration/TpmProfile_CommandList.h
+   # Change:
+   #define CC_AC_GetCapability           CC_NO
+   #define CC_AC_Send                    CC_NO
+   # To:
+   #define CC_AC_GetCapability           CC_YES
+   #define CC_AC_Send                    CC_YES
+   ```
+
+2. **Rebuild the simulator:**
+   ```bash
+   cd tcg-tpm-reference/TPMCmd/build
+   make clean
+   make
+   ```
+
+3. **Note:** Enabling AC commands requires regenerating command dispatch structures, which may require additional build steps.
+
+### Startup Commands
+
+The TCG TPM simulator requires **power-up and startup commands** on the platform interface (port 2322) before the command interface (port 2321) is enabled:
+
+```bash
+# Power up command
+echo -ne "\x00\x00\x00\x01" | nc 127.0.0.1 2322
+
+# Startup command  
+echo -ne "\x00\x00\x00\x0B" | nc 127.0.0.1 2322
+```
+
+The test script `test_tcg_spdm.sh` automatically sends these commands if the simulator is detected.
+
+### What Actually Works in TCG Simulator
+
+Based on analysis of the TCG simulator source code:
+
+**✅ Fully Implemented:**
+- `AC_GetCapability` - Returns AC capabilities from hardcoded data (`acData0001`)
+- Command marshalling/unmarshalling - All structures are correctly defined
+- Handle validation - AC handle type checking works
+
+**⚠️ Stub Implementation:**
+- `AC_Send` - `AcSendObject()` always returns `{TPM_AT_ERROR, TPM_AE_NONE}` (dummy data)
+- No actual SPDM message processing - commands are accepted but not processed
+
+**❌ Not Implemented:**
+- `Policy_AC_SendSelect` - Command exists but not implemented
+- `PolicyTransportSPDM` - Command exists but not implemented  
+- `TPM_CAP_SPDM_SESSION_INFO` - Capability not implemented
+
+**Key Finding:** The simulator code comments state: *"This code in this clause is provided for testing of the TPM's command interface. The implementation of Attached Components is not expected to be as shown in this code."*
+
+This confirms the simulator is designed for **command interface testing**, not full SPDM protocol implementation.
 
 ## Test Scripts
 

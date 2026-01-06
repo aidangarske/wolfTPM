@@ -173,6 +173,46 @@ echo "=========================================="
 echo "SPDM AC Demo Test Suite"
 echo "=========================================="
 echo ""
+echo "Note: AC_Send is disabled by default in TCG simulator (CC_AC_Send = CC_NO)."
+echo "      Functions that depend on AC_Send (tunnel, establish-channel) may show"
+echo "      TPM_RC_COMMAND_CODE - this is expected. Command marshalling is correct,"
+echo "      but requires simulator rebuild to enable. See examples/spdm/README.md"
+echo "      for details."
+echo ""
+
+# Check if TPM simulator is running
+SIMULATOR_RUNNING=0
+if pgrep -f "[Ss]imulator.*2321" >/dev/null 2>&1 || \
+   pgrep -f "tpm2-simulator" >/dev/null 2>&1 || \
+   pgrep -f "tpm_server" >/dev/null 2>&1; then
+    SIMULATOR_RUNNING=1
+fi
+
+# Check if we can connect to port 2321
+if command -v nc >/dev/null 2>&1; then
+    if nc -z 127.0.0.1 2321 2>/dev/null; then
+        SIMULATOR_RUNNING=1
+    fi
+fi
+
+if [ $SIMULATOR_RUNNING -eq 0 ]; then
+    echo "⚠ WARNING: TPM simulator does not appear to be running on port 2321"
+    echo "   Tests will fail to connect. To run tests:"
+    echo "   1. Start TCG TPM Simulator:"
+    echo "      cd tcg-tpm-reference/TPMCmd/Simulator/src"
+    echo "      ./tpm2-simulator"
+    echo ""
+    echo "   2. In another terminal, send startup commands:"
+    echo "      echo -ne \"\\x00\\x00\\x00\\x01\" | nc 127.0.0.1 2322"
+    echo "      echo -ne \"\\x00\\x00\\x00\\x0B\" | nc 127.0.0.1 2322"
+    echo ""
+    echo "   3. Then run this test script again"
+    echo ""
+    echo "   Note: Handle discovery uses GetCapability(TPM_CAP_HANDLES, HR_AC)"
+    echo "         which should work even if AC commands are disabled."
+    echo "         The issue is that the simulator must be running to connect."
+    echo ""
+fi
 
 # Test 1: Help
 run_test "Help output" "$SPDM_AC_DEMO --help" "yes"
@@ -217,6 +257,7 @@ if [ "$TEST_MODE" = "all" ] || [ "$TEST_MODE" = "capabilities" ]; then
 fi
 
 # Test 5: SPDM tunnel
+# Note: May return TPM_RC_COMMAND_CODE if AC_Send not enabled in simulator (expected)
 if [ "$TEST_MODE" = "all" ] || [ "$TEST_MODE" = "tunnel" ]; then
     if [ -n "$SPDM_FILE" ] && [ -f "$SPDM_FILE" ]; then
         SPDM_SIZE=$(stat -c%s "$SPDM_FILE" 2>/dev/null || stat -f%z "$SPDM_FILE" 2>/dev/null)
@@ -225,7 +266,7 @@ if [ "$TEST_MODE" = "all" ] || [ "$TEST_MODE" = "tunnel" ]; then
         echo ""
         
         TEST_HANDLE="${FIRST_HANDLE:-0x40000110}"
-        run_test "SPDM tunnel (handle $TEST_HANDLE, file $SPDM_FILE)" "$SPDM_AC_DEMO --spdm-tunnel $TEST_HANDLE $SPDM_FILE" "any"
+        run_test "SPDM tunnel (handle $TEST_HANDLE, file $SPDM_FILE - may show COMMAND_CODE)" "$SPDM_AC_DEMO --spdm-tunnel $TEST_HANDLE $SPDM_FILE" "any"
         echo ""
     else
         if [ "$TEST_MODE" = "tunnel" ]; then
@@ -243,9 +284,10 @@ if [ "$TEST_MODE" = "all" ] || [ "$TEST_MODE" = "tunnel" ]; then
 fi
 
 # Test 6: Establish secure channel
+# Note: Depends on AC_Send for nonce - may fail if AC_Send not enabled (expected)
 if [ "$TEST_MODE" = "all" ] || [ "$TEST_MODE" = "channel" ]; then
     TEST_HANDLE="${FIRST_HANDLE:-0x40000110}"
-    run_test "Establish secure channel (handle $TEST_HANDLE)" "$SPDM_AC_DEMO --establish-channel $TEST_HANDLE" "any"
+    run_test "Establish secure channel (handle $TEST_HANDLE - depends on AC_Send)" "$SPDM_AC_DEMO --establish-channel $TEST_HANDLE" "any"
     echo ""
 fi
 
