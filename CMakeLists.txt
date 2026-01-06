@@ -342,6 +342,29 @@ if(WOLFTPM_FIRMWARE)
     list(APPEND WOLFTPM_DEFINITIONS "-DWOLFTPM_FIRMWARE_UPGRADE")
 endif()
 
+# IRQ (Interrupt) Support
+set(WOLFTPM_IRQ "auto" CACHE STRING
+    "Enable IRQ (interrupt) support for TPM (default: auto - enabled when SLB9672/SLB9673)")
+set_property(CACHE WOLFTPM_IRQ
+    PROPERTY STRINGS "auto;yes;no")
+if("${WOLFTPM_IRQ}" STREQUAL "auto")
+    # Enable by default when SLB9672 or SLB9673 is selected
+    if("${WOLFTPM_MODULE}" STREQUAL "slb9672" OR "${WOLFTPM_MODULE}" STREQUAL "slb9673")
+        set(WOLFTPM_IRQ "yes")
+    else()
+        set(WOLFTPM_IRQ "no")
+    endif()
+endif()
+if(WOLFTPM_IRQ)
+    list(APPEND WOLFTPM_DEFINITIONS "-DWOLFTPM_IRQ")
+    # Check for Linux GPIO headers
+    include(CheckIncludeFile)
+    check_include_file("linux/gpio.h" HAVE_LINUX_GPIO_H)
+    if(HAVE_LINUX_GPIO_H)
+        list(APPEND WOLFTPM_DEFINITIONS "-DHAVE_LINUX_GPIO_H")
+    endif()
+endif()
+
 # Examples
 set(WOLFTPM_EXAMPLES "yes" CACHE BOOL
     "Build examples")

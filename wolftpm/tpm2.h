@@ -1886,6 +1886,12 @@ typedef struct TPM2_CTX {
 #ifdef WOLFTPM_LINUX_DEV
     int fd;
 #endif
+#ifdef WOLFTPM_IRQ
+    /* IRQ Support */
+    int irq_enabled;
+    int irq_gpio_fd;
+    int irq_gpio_pin;
+#endif
 } TPM2_CTX;
 
 

@@ -451,6 +451,36 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFTPM_FIRMWARE_UPGRADE"
 fi
 
+# IRQ (Interrupt) support for TPM
+AC_ARG_ENABLE([irq],
+    [AS_HELP_STRING([--enable-irq],[Enable IRQ (interrupt) support for TPM (default: enabled when SLB9672/SLB9673)])],
+    [ ENABLED_IRQ=$enableval ],
+    [ ENABLED_IRQ=test ]
+    )
+
+if test "x$ENABLED_IRQ" = "xtest"
+then
+    # Enable by default when SLB9672 or SLB9673 is enabled
+    if test "x$ENABLED_INFINEON" != "xno" && \
+       (test "x$ENABLED_INFINEON" = "xslb9672" || test "x$ENABLED_INFINEON" = "xslb9673")
+    then
+        ENABLED_IRQ=yes
+    else
+        ENABLED_IRQ=no
+    fi
+fi
+
+if test "x$ENABLED_IRQ" = "xyes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFTPM_IRQ"
+    # Check for Linux GPIO headers
+    AC_CHECK_HEADER([linux/gpio.h], [HAVE_LINUX_GPIO_H=yes], [HAVE_LINUX_GPIO_H=no])
+    if test "x$HAVE_LINUX_GPIO_H" = "xyes"
+    then
+        AM_CFLAGS="$AM_CFLAGS -DHAVE_LINUX_GPIO_H"
+    fi
+fi
+
 # Enable support for provisioning identity keys for device and attestation
 AC_ARG_ENABLE([provisioning],
     [AS_HELP_STRING([--enable-provisioning],[Enable support for Provisioning Initial Device Identity (IDevID) and Attestation Identity Keys (default: enabled)])],
@@ -491,6 +521,7 @@ AM_CONDITIONAL([BUILD_NUVOTON], [test "x$ENABLED_NUVOTON" = "xyes"])
 AM_CONDITIONAL([BUILD_CHECKWAITSTATE], [test "x$ENABLED_CHECKWAITSTATE" = "xyes"])
 AM_CONDITIONAL([BUILD_AUTODETECT], [test "x$ENABLED_AUTODETECT" = "xyes"])
 AM_CONDITIONAL([BUILD_FIRMWARE], [test "x$ENABLED_FIRMWARE" = "xyes"])
+AM_CONDITIONAL([BUILD_IRQ], [test "x$ENABLED_IRQ" = "xyes"])
 AM_CONDITIONAL([BUILD_HAL], [test "x$ENABLED_EXAMPLE_HAL" = "xyes" || test "x$ENABLED_MMIO" = "xyes"])
 
 

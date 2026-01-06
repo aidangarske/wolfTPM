@@ -641,6 +641,11 @@ TPM_RC TPM2_Init_ex(TPM2_CTX* ctx, TPM2HalIoCb ioCb, void* userCtx,
 #if defined(WOLFTPM_SWTPM)
     ctx->tcpCtx.fd = -1;
 #endif
+#ifdef WOLFTPM_IRQ
+    ctx->irq_enabled = 0;
+    ctx->irq_gpio_fd = -1;
+    ctx->irq_gpio_pin = -1;
+#endif
 
 #if defined(WOLFTPM_LINUX_DEV) || defined(WOLFTPM_SWTPM) || \
     defined(WOLFTPM_WINAPI)

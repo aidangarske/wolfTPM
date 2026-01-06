@@ -17,5 +17,9 @@ src_libwolftpm_la_SOURCES += \
                     hal/tpm_io_xilinx.c
 endif
 
+if BUILD_IRQ
+src_libwolftpm_la_SOURCES += hal/tpm_io_linux_irq.c
+endif
+
 nobase_include_HEADERS += hal/tpm_io.h
 EXTRA_DIST += hal/README.md

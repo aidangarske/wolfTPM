@@ -50,13 +50,30 @@ WOLFTPM_LOCAL int TPM2_TIS_GetBurstCount(TPM2_CTX* ctx, word16* burstCount);
 WOLFTPM_LOCAL int TPM2_TIS_SendCommand(TPM2_CTX* ctx, TPM2_Packet* packet);
 WOLFTPM_LOCAL int TPM2_TIS_Ready(TPM2_CTX* ctx);
 WOLFTPM_LOCAL int TPM2_TIS_WaitForStatus(TPM2_CTX* ctx, byte status, byte status_mask);
-WOLFTPM_LOCAL int TPM2_TIS_Status(TPM2_CTX* ctx, byte* status);
-WOLFTPM_LOCAL int TPM2_TIS_GetInfo(TPM2_CTX* ctx);
-WOLFTPM_LOCAL int TPM2_TIS_RequestLocality(TPM2_CTX* ctx, int timeout);
+WOLFTPM_API int TPM2_TIS_Status(TPM2_CTX* ctx, byte* status);
+WOLFTPM_API int TPM2_TIS_GetInfo(TPM2_CTX* ctx);
+WOLFTPM_API int TPM2_TIS_RequestLocality(TPM2_CTX* ctx, int timeout);
 WOLFTPM_LOCAL int TPM2_TIS_CheckLocality(TPM2_CTX* ctx, int locality, byte* access);
 WOLFTPM_LOCAL int TPM2_TIS_StartupWait(TPM2_CTX* ctx, int timeout);
 WOLFTPM_LOCAL int TPM2_TIS_Write(TPM2_CTX* ctx, word32 addr, const byte* value, word32 len);
 WOLFTPM_LOCAL int TPM2_TIS_Read(TPM2_CTX* ctx, word32 addr, byte* result, word32 len);
+
+#ifdef WOLFTPM_IRQ
+/* IRQ (Interrupt) Support - Register Flags */
+/* These match the definitions in src/tpm2_tis.c */
+#ifndef TPM_INTF_DATA_AVAIL_INT
+#define TPM_INTF_DATA_AVAIL_INT     0x001
+#define TPM_INTF_STS_VALID_INT      0x002
+#define TPM_INTF_LOC_CHANGE_INT     0x004
+#define TPM_INTF_CMD_READY_INT      0x080
+#endif
+
+/* IRQ (Interrupt) Support Functions */
+WOLFTPM_API int TPM2_TIS_CheckIRQSupport(TPM2_CTX* ctx, word32* supported_flags);
+WOLFTPM_API int TPM2_TIS_EnableIRQ(TPM2_CTX* ctx, word32 irq_flags);
+WOLFTPM_API int TPM2_TIS_DisableIRQ(TPM2_CTX* ctx);
+WOLFTPM_API int TPM2_TIS_GetIRQStatus(TPM2_CTX* ctx, word32* status);
+#endif /* WOLFTPM_IRQ */
 
 #ifdef __cplusplus
     }  /* extern "C" */

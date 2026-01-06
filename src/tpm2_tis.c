@@ -24,6 +24,11 @@
 #endif
 
 #include <wolftpm/tpm2_tis.h>
+#ifdef WOLFTPM_IRQ
+#ifdef __linux__
+#include <hal/tpm_io.h>
+#endif
+#endif
 
 /******************************************************************************/
 /* --- BEGIN TPM Interface Specification (TIS) Layer */
@@ -361,6 +366,181 @@ int TPM2_TIS_GetInfo(TPM2_CTX* ctx)
     return rc;
 }
 
+#ifdef WOLFTPM_IRQ
+/* Check if TPM supports interrupts based on INTF_CAPS register */
+int TPM2_TIS_CheckIRQSupport(TPM2_CTX* ctx, word32* supported_flags)
+{
+    int rc = TPM_RC_SUCCESS;
+    word32 caps;
+
+    if (ctx == NULL || supported_flags == NULL)
+        return BAD_FUNC_ARG;
+
+    /* Ensure we have the capabilities */
+    if (ctx->caps == 0) {
+        rc = TPM2_TIS_GetInfo(ctx);
+        if (rc != TPM_RC_SUCCESS)
+            return rc;
+    }
+
+    caps = ctx->caps;
+    *supported_flags = 0;
+
+    /* Check which interrupts are supported */
+    if (caps & TPM_INTF_DATA_AVAIL_INT)
+        *supported_flags |= TPM_INTF_DATA_AVAIL_INT;
+    if (caps & TPM_INTF_STS_VALID_INT)
+        *supported_flags |= TPM_INTF_STS_VALID_INT;
+    if (caps & TPM_INTF_CMD_READY_INT)
+        *supported_flags |= TPM_INTF_CMD_READY_INT;
+    if (caps & TPM_INTF_LOC_CHANGE_INT)
+        *supported_flags |= TPM_INTF_LOC_CHANGE_INT;
+
+    return rc;
+}
+
+/* Enable interrupts on the TPM */
+int TPM2_TIS_EnableIRQ(TPM2_CTX* ctx, word32 irq_flags)
+{
+    int rc;
+    word32 int_enable = 0;
+    word32 supported_flags = 0;
+    word32 caps;
+
+    if (ctx == NULL)
+        return BAD_FUNC_ARG;
+
+    /* Check if interrupts are supported */
+    rc = TPM2_TIS_CheckIRQSupport(ctx, &supported_flags);
+    if (rc != TPM_RC_SUCCESS)
+        return rc;
+
+    if (supported_flags == 0) {
+    #ifdef DEBUG_WOLFTPM
+        printf("TPM does not support interrupts\n");
+    #endif
+        return TPM_RC_FAILURE;
+    }
+
+    /* Only enable supported interrupts */
+    irq_flags &= supported_flags;
+
+    if (irq_flags == 0) {
+    #ifdef DEBUG_WOLFTPM
+        printf("No supported interrupt flags specified\n");
+    #endif
+        return BAD_FUNC_ARG;
+    }
+
+    /* Read current interrupt enable register */
+    rc = TPM2_TIS_Read(ctx, TPM_INT_ENABLE(ctx->locality), (byte*)&int_enable,
+        sizeof(int_enable));
+#ifdef BIG_ENDIAN_ORDER
+    int_enable = ByteReverseWord32(int_enable);
+#endif
+    if (rc != TPM_RC_SUCCESS)
+        return rc;
+
+    /* Set global interrupt enable and requested interrupt flags */
+    int_enable |= TPM_GLOBAL_INT_ENABLE;
+    int_enable |= irq_flags;
+
+    /* Determine interrupt trigger type from capabilities */
+    caps = ctx->caps;
+    if (caps & TPM_INTF_INT_LEVEL_LOW) {
+        /* Use level low (most common) */
+        int_enable &= ~(TPM_INTF_INT_LEVEL_HIGH | TPM_INTF_INT_EDGE_RISING | 
+                       TPM_INTF_INT_EDGE_FALLING);
+    }
+    else if (caps & TPM_INTF_INT_EDGE_FALLING) {
+        /* Use falling edge */
+        int_enable &= ~(TPM_INTF_INT_LEVEL_LOW | TPM_INTF_INT_LEVEL_HIGH | 
+                       TPM_INTF_INT_EDGE_RISING);
+    }
+    else if (caps & TPM_INTF_INT_EDGE_RISING) {
+        /* Use rising edge */
+        int_enable &= ~(TPM_INTF_INT_LEVEL_LOW | TPM_INTF_INT_LEVEL_HIGH | 
+                       TPM_INTF_INT_EDGE_FALLING);
+    }
+
+#ifdef BIG_ENDIAN_ORDER
+    int_enable = ByteReverseWord32(int_enable);
+#endif
+
+    /* Write interrupt enable register */
+    rc = TPM2_TIS_Write(ctx, TPM_INT_ENABLE(ctx->locality), 
+                        (byte*)&int_enable, sizeof(int_enable));
+
+#ifdef DEBUG_WOLFTPM
+    if (rc == TPM_RC_SUCCESS) {
+        printf("TPM interrupts enabled: 0x%08x\n", irq_flags);
+    }
+#endif
+
+    return rc;
+}
+
+/* Disable interrupts on the TPM */
+int TPM2_TIS_DisableIRQ(TPM2_CTX* ctx)
+{
+    int rc;
+    word32 int_enable = 0;
+
+    if (ctx == NULL)
+        return BAD_FUNC_ARG;
+
+    /* Read current interrupt enable register */
+    rc = TPM2_TIS_Read(ctx, TPM_INT_ENABLE(ctx->locality), (byte*)&int_enable,
+        sizeof(int_enable));
+#ifdef BIG_ENDIAN_ORDER
+    int_enable = ByteReverseWord32(int_enable);
+#endif
+    if (rc != TPM_RC_SUCCESS)
+        return rc;
+
+    /* Clear global interrupt enable */
+    int_enable &= ~TPM_GLOBAL_INT_ENABLE;
+
+#ifdef BIG_ENDIAN_ORDER
+    int_enable = ByteReverseWord32(int_enable);
+#endif
+
+    /* Write interrupt enable register */
+    rc = TPM2_TIS_Write(ctx, TPM_INT_ENABLE(ctx->locality), 
+                        (byte*)&int_enable, sizeof(int_enable));
+
+#ifdef DEBUG_WOLFTPM
+    if (rc == TPM_RC_SUCCESS) {
+        printf("TPM interrupts disabled\n");
+    }
+#endif
+
+    return rc;
+}
+
+/* Read and clear interrupt status register */
+int TPM2_TIS_GetIRQStatus(TPM2_CTX* ctx, word32* status)
+{
+    int rc;
+    word32 int_status = 0;
+
+    if (ctx == NULL || status == NULL)
+        return BAD_FUNC_ARG;
+
+    /* Read interrupt status register (reading clears it) */
+    rc = TPM2_TIS_Read(ctx, TPM_INT_STATUS(ctx->locality), (byte*)&int_status,
+        sizeof(int_status));
+#ifdef BIG_ENDIAN_ORDER
+    int_status = ByteReverseWord32(int_status);
+#endif
+    if (rc == TPM_RC_SUCCESS) {
+        *status = int_status;
+    }
+
+    return rc;
+}
+#endif /* WOLFTPM_IRQ */
+
 int TPM2_TIS_Status(TPM2_CTX* ctx, byte* status)
 {
     return TPM2_TIS_Read(ctx, TPM_STS(ctx->locality), status,
@@ -373,6 +553,80 @@ int TPM2_TIS_WaitForStatus(TPM2_CTX* ctx, byte status, byte status_mask)
     int timeout = TPM_TIMEOUT_TRIES;
     byte reg = 0;
 
+#ifdef WOLFTPM_IRQ
+#ifdef __linux__
+    /* Check if IRQ is enabled and GPIO is configured */
+    if (ctx->irq_enabled && ctx->irq_gpio_fd > 0) {
+        word32 irq_flag = 0;
+        word32 int_status = 0;
+        int irq_wait_ret;
+        int timeout_ms = (TPM_TIMEOUT_TRIES * 10); /* Convert to approximate ms */
+
+        /* Map status to interrupt flag */
+        if (status & TPM_STS_DATA_AVAIL)
+            irq_flag = TPM_INTF_DATA_AVAIL_INT;
+        else if (status & TPM_STS_VALID)
+            irq_flag = TPM_INTF_STS_VALID_INT;
+        else if (status & TPM_STS_COMMAND_READY)
+            irq_flag = TPM_INTF_CMD_READY_INT;
+
+        /* Only use IRQ if we have a matching interrupt flag */
+        if (irq_flag != 0) {
+            /* Step 1: Clear any pending interrupts */
+            (void)TPM2_TIS_GetIRQStatus(ctx, &int_status);
+
+            /* Step 2: Enable appropriate interrupt flag */
+            rc = TPM2_TIS_EnableIRQ(ctx, irq_flag);
+            if (rc == TPM_RC_SUCCESS) {
+                /* Step 3: Check status immediately (race condition prevention) */
+                rc = TPM2_TIS_Status(ctx, &reg);
+                if (rc == TPM_RC_SUCCESS && (reg & status) == status_mask) {
+                    /* Status already ready - return immediately */
+                    TPM2_TIS_DisableIRQ(ctx);
+                #ifdef WOLFTPM_DEBUG_TIMEOUT
+                    printf("TIS_WaitForStatus: Status ready immediately (IRQ)\n");
+                #endif
+                    return rc;
+                }
+
+                /* Step 4: Wait on GPIO IRQ with timeout */
+                irq_wait_ret = TPM2_Linux_GPIO_IRQ_Wait(ctx, timeout_ms);
+                if (irq_wait_ret > 0) {
+                    /* Interrupt occurred */
+                    /* Step 5: Read interrupt status to verify */
+                    rc = TPM2_TIS_GetIRQStatus(ctx, &int_status);
+                    if (rc == TPM_RC_SUCCESS && (int_status & irq_flag)) {
+                        /* Step 6: Read TPM_STS register to check status */
+                        rc = TPM2_TIS_Status(ctx, &reg);
+                        if (rc == TPM_RC_SUCCESS && (reg & status) == status_mask) {
+                            /* Step 7: Status matches - success */
+                            TPM2_TIS_DisableIRQ(ctx);
+                        #ifdef WOLFTPM_DEBUG_TIMEOUT
+                            printf("TIS_WaitForStatus: IRQ success\n");
+                        #endif
+                            return rc;
+                        }
+                    }
+                } else if (irq_wait_ret < 0) {
+                    /* Error waiting - fall back to polling */
+                #ifdef DEBUG_WOLFTPM
+                    printf("TIS_WaitForStatus: IRQ wait error, falling back to polling\n");
+                #endif
+                    TPM2_TIS_DisableIRQ(ctx);
+                } else {
+                    /* Timeout - fall back to polling */
+                #ifdef DEBUG_WOLFTPM
+                    printf("TIS_WaitForStatus: IRQ timeout, falling back to polling\n");
+                #endif
+                    TPM2_TIS_DisableIRQ(ctx);
+                }
+            }
+        }
+    }
+#endif /* __linux__ */
+#endif /* WOLFTPM_IRQ */
+
+    /* Polling fallback (original implementation or when IRQ unavailable) */
     do {
         rc = TPM2_TIS_Status(ctx, &reg);
         if (rc == TPM_RC_SUCCESS && (reg & status) == status_mask)

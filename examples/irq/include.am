@@ -1,0 +1,22 @@
+# vim:ft=automake
+# All paths should be given relative to the root
+
+if BUILD_IRQ
+if BUILD_EXAMPLES
+noinst_PROGRAMS += examples/irq/tpm_irq_test
+examples_irq_tpm_irq_test_SOURCES      = examples/irq/tpm_irq_test.c \
+                                         examples/tpm_test_keys.c
+examples_irq_tpm_irq_test_LDADD         = src/libwolftpm.la
+examples_irq_tpm_irq_test_DEPENDENCIES  = src/libwolftpm.la
+examples_irq_tpm_irq_test_CPPFLAGS     = -I$(srcdir)/examples \
+                                         -I$(srcdir)/src \
+                                         -I$(srcdir)/hal
+endif
+endif
+
+example_irqdir = $(exampledir)/irq
+dist_example_irq_DATA = examples/irq/tpm_irq_test.c \
+                        examples/irq/verify_irq_hardware.sh
+
+DISTCLEANFILES+= examples/irq/.libs/tpm_irq_test
+

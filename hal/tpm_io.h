@@ -142,6 +142,15 @@ WOLFTPM_LOCAL int TPM2_IoCb_Mmio(TPM2_CTX* ctx, int isRead, word32 addr, byte* b
 #endif /* WOLFTPM_EXAMPLE_HAL */
 #endif /* !(WOLFTPM_LINUX_DEV || WOLFTPM_SWTPM || WOLFTPM_WINAPI) */
 
+#ifdef WOLFTPM_IRQ
+#ifdef __linux__
+/* Linux GPIO IRQ Support Functions */
+WOLFTPM_API int TPM2_Linux_GPIO_IRQ_Setup(TPM2_CTX* ctx, int gpio_pin);
+WOLFTPM_API int TPM2_Linux_GPIO_IRQ_Wait(TPM2_CTX* ctx, int timeout_ms);
+WOLFTPM_API void TPM2_Linux_GPIO_IRQ_Cleanup(TPM2_CTX* ctx);
+#endif /* __linux__ */
+#endif /* WOLFTPM_IRQ */
+
 #ifdef __cplusplus
     }  /* extern "C" */
 #endif
