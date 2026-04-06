@@ -189,6 +189,12 @@ int TPM2_ASN_DecodeX509Cert(uint8_t* input, int inputSz,
     }
 
     if (rc >= 0) {
+        if (idx >= (word32)inputSz) {
+            rc = TPM_RC_VALUE;
+        }
+    }
+
+    if (rc >= 0) {
         /* check version tag is INTEGER */
         if (input[idx] != TPM2_ASN_INTEGER) {
             rc = TPM_RC_VALUE;
@@ -357,7 +363,7 @@ int TPM2_ASN_RsaUnpadPkcsv15(uint8_t** pSig, int* sigSz)
     uint8_t* sig = *pSig;
     int idx = 0;
 
-    if (*sigSz < 2)
+    if (*sigSz < 3)
         return rc;
 
     if (sig[idx++] == 0x00 && sig[idx++] == 0x01) {

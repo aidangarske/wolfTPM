@@ -162,8 +162,6 @@ static TPM_RC SwTpmConnect(TPM2_CTX* ctx, const char* host, const char* port)
     if (ctx == NULL) {
         return BAD_FUNC_ARG;
     }
-    (void)port;
-
     /* Allow runtime override via TPM2_SWTPM_HOST env var */
     {
         const char* envDev = getenv("TPM2_SWTPM_HOST");
@@ -188,7 +186,7 @@ static TPM_RC SwTpmConnect(TPM2_CTX* ctx, const char* host, const char* port)
     }
 
     /* Baud rate from port string or default */
-    baudInt = atoi(port);
+    baudInt = (port != NULL) ? atoi(port) : 0;
     if (baudInt <= 0) {
         baudInt = TPM2_SWTPM_PORT;
     }

@@ -1046,6 +1046,9 @@ int FwWrapPrivate(FWTPM_Object* parent,
 
     /* HMAC integrity over encrypted data */
     if (rc == 0) {
+        rc = wc_HmacInit(hmac, NULL, INVALID_DEVID);
+    }
+    if (rc == 0) {
         rc = wc_HmacSetKey(hmac, WC_SHA256, aesKey, 32);
     }
     if (rc == 0) {
@@ -1141,6 +1144,9 @@ int FwUnwrapPrivate(FWTPM_Object* parent,
     }
 
     /* Verify HMAC */
+    if (rc == 0) {
+        rc = wc_HmacInit(hmac, NULL, INVALID_DEVID);
+    }
     if (rc == 0) {
         rc = wc_HmacSetKey(hmac, WC_SHA256, aesKey, 32);
     }

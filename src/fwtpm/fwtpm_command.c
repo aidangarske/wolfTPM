@@ -244,17 +244,21 @@ static int FwComputeRpHash(TPMI_ALG_HASH hashAlg, TPM_CC cmdCode,
     int dSize = TPM2_GetHashDigestSize(hashAlg);
     UINT32 rcZero = 0; /* responseCode is always 0 for success HMAC */
     UINT32 ccSwap;
-    int rc;
+    int rc = 0;
 
     FWTPM_ALLOC_VAR(hashCtx, wc_HashAlg);
 
-    if (dSize <= 0)
-        return TPM_RC_FAILURE;
+    if (dSize <= 0 || rc != 0) {
+        FWTPM_FREE_VAR(hashCtx);
+        return (rc != 0) ? rc : TPM_RC_FAILURE;
+    }
     *hashOutSz = dSize;
 
     rc = wc_HashInit(hashCtx, wcHash);
-    if (rc != 0)
+    if (rc != 0) {
+        FWTPM_FREE_VAR(hashCtx);
         return rc;
+    }
 
     /* responseCode = 0 (success) - in native byte order like client */
     rc = wc_HashUpdate(hashCtx, wcHash, (byte*)&rcZero, 4);
@@ -2143,7 +2147,7 @@ static TPM_RC FwCmd_CreatePrimary(FWTPM_CTX* ctx, TPM2_Packet* cmd,
 #ifdef HAVE_ECC
             case TPM_ALG_ECC: {
                 /* Concatenate x || y into a temp buffer */
-                static byte eccUniqueBuf[MAX_ECC_KEY_BYTES * 2];
+                byte eccUniqueBuf[MAX_ECC_KEY_BYTES * 2];
                 int xSz = (int)inPublic.publicArea.unique.ecc.x.size;
                 int ySz = (int)inPublic.publicArea.unique.ecc.y.size;
                 if (xSz + ySz <= (int)sizeof(eccUniqueBuf)) {
@@ -7099,7 +7103,7 @@ static TPM_RC FwCmd_StartAuthSession(FWTPM_CTX* ctx, TPM2_Packet* cmd,
             }
 #ifndef FWTPM_NO_NV
             else if ((bind & 0xFF000000)
-                == NV_INDEX_FIRST) {
+                == (NV_INDEX_FIRST & 0xFF000000)) {
                 /* NV index: look up auth value from NV index slot */
                 FWTPM_NvIndex* nvBind = FwFindNvIndex(ctx, bind);
                 if (nvBind != NULL) {
@@ -7119,6 +7123,7 @@ static TPM_RC FwCmd_StartAuthSession(FWTPM_CTX* ctx, TPM2_Packet* cmd,
                     keyInSz += bindAuth.size;
                 }
             }
+            TPM2_ForceZero(&bindAuth, sizeof(bindAuth));
         }
 
         if (keyInSz == 0) {
@@ -12170,14 +12175,13 @@ int FWTPM_ProcessCommand(FWTPM_CTX* ctx,
     UINT32 cmdSizeHdr;
     UINT32 cmdCode;
     const FWTPM_CMD_ENTRY* entry;
-    TPM_RC rc;
+    TPM_RC rc = TPM_RC_SUCCESS;
 #ifndef FWTPM_NO_PARAM_ENC
     FWTPM_Session* encSess = NULL;  /* Session requesting param encryption */
     int doEncCmd = 0;               /* Decrypt incoming encrypted param */
     int doEncRsp = 0;               /* Encrypt outgoing response param */
 #endif
     int pj, hj;                     /* Loop indices for auth validation */
-    int pwSz, avSz;                 /* Password/auth comparison sizes */
 
     if (ctx == NULL || cmdBuf == NULL || rspBuf == NULL || rspSize == NULL) {
         return BAD_FUNC_ARG;
@@ -12253,6 +12257,7 @@ int FWTPM_ProcessCommand(FWTPM_CTX* ctx,
     int cpStart = 0; /* Start of command parameters (after auth area) */
     TPM_HANDLE cmdHandles[4]; /* Input handles for authValue lookup */
     int cmdHandleCnt = 0;
+    XMEMSET(cmdAuths, 0, sizeof(cmdAuths));
     XMEMSET(cmdHandles, 0, sizeof(cmdHandles));
 
     /* For TPM_ST_SESSIONS commands, parse auth area to detect param encryption
@@ -12380,6 +12385,13 @@ int FWTPM_ProcessCommand(FWTPM_CTX* ctx,
         cmdPkt.pos = savedPos;
     }
 
+    /* Check if auth area parsing encountered an error */
+    if (rc != TPM_RC_SUCCESS) {
+        *rspSize = FwBuildErrorResponse(rspBuf,
+            TPM_ST_NO_SESSIONS, rc);
+        return TPM_RC_SUCCESS;
+    }
+
     /* Policy digest validation: for policy sessions authorizing access to
      * entities with an authPolicy, verify session policyDigest matches.
      * Per TPM 2.0 spec Part 1, Section 19.7.1: "A policy session can only
@@ -12464,7 +12476,7 @@ int FWTPM_ProcessCommand(FWTPM_CTX* ctx,
              * and verify trailing bytes are zero, all in constant
              * time to avoid leaking the effective auth length. */
             {
-              int maxSz, minSz, authFail;
+              int pwSz, avSz, maxSz, minSz, authFail;
               volatile byte diff = 0;
               int ci;
               pwSz = (int)cmdAuths[pj].passwordSize;
