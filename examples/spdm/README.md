@@ -66,6 +66,17 @@ make
 | `--caps` | Read TPM capabilities over the current transport |
 | `--session-info` | Show the TPM's view of the SPDM session (`TPM_CAP_SPDM_SESSION_INFO` key names) |
 | `--policy-nv` | Define an NV index guarded by `TPM2_PolicyTransportSPDM`, then write and read it over the session |
+
+The `nv_bind` example is a focused, self-contained version of the same idea: it
+provisions an NV index whose `authPolicy` is `TPM2_PolicyTransportSPDM`, stores a
+secret over an SPDM-PSK session, then shows that the identical read over a plain
+(non-SPDM) connection is refused with `TPM_RC_CHANNEL`.
+
+```sh
+./src/fwtpm/fwtpm_server --spdm-psk --spdm-psk-hex <psk> --clear &
+./examples/spdm/nv_bind --psk <psk>
+```
+
 | `--psk <hex>` | Start a PSK session |
 | `--psk-set <psk> <clearauth>` | Provision a 64-byte PSK and 32-byte ClearAuth |
 | `--psk-clear <clearauth>` | Clear a provisioned PSK |

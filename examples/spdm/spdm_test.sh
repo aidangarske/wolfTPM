@@ -516,6 +516,11 @@ elif [ "$VENDOR" = "fwtpm-psk" ]; then
     else
         echo -e "  ${YELLOW}Skipping: $UNIT_TEST not found${NC}"
     fi
+    if [ -x ./examples/spdm/nv_bind ]; then
+        run_test_output "NV index bound to SPDM (nv_bind demo)" \
+            "reachable only over SPDM" \
+            ./examples/spdm/nv_bind --psk "$NATIONS_PSK"
+    fi
     run_test "Lock PSK SPDM-only mode" "$SPDM_DEMO" --vendor=nations \
         --psk "$NATIONS_PSK" --lock
     run_test_rejected "Uncredentialed initialization rejected while locked" \

@@ -5,7 +5,7 @@
 * TPM2_PolicyTransportSPDM and TPM_CAP_SPDM_SESSION_INFO (TPM 2.0 Library v1.84)
   - New `wolfTPM2_PolicyTransportSPDM`, `wolfTPM2_PolicyTransportSPDMMake` (offline authPolicy) and `wolfTPM2_GetCapability_SPDMSessionInfo` so an NV index or key can be bound to an SPDM session
   - fwTPM implements the command, the capability and the `TPM_RC_CHANNEL` / `TPM_RC_CHANNEL_KEY` enforcement so the flow is testable without hardware
-  - `spdm_ctrl --session-info` and `--policy-nv` demonstrate the binding; covered by `spdm_test.sh` in the fwTPM TCG and PSK modes
+  - `spdm_ctrl --session-info` and `--policy-nv`, and the `nv_bind` example, demonstrate the binding (write/read allowed over SPDM, off-channel read refused with `TPM_RC_CHANNEL`); covered by `spdm_test.sh` in the fwTPM TCG and PSK modes
 
 ## wolfTPM Release 4.1.0 (Jul 10, 2026)
 
