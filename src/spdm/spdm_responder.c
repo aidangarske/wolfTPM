@@ -216,6 +216,24 @@ int wolfSPDM_RespIsLocked(const WOLFSPDM_RESP_CTX* ctx)
     return (ctx != NULL && ctx->flags.spdmOnlyLock) ? 1 : 0;
 }
 
+int wolfSPDM_RespGetSessionKeys(const WOLFSPDM_RESP_CTX* ctx,
+    const byte** reqPubTPMT, word32* reqPubTPMTSz,
+    const byte** tpmPubKey, word32* tpmPubKeySz)
+{
+    if (ctx == NULL || reqPubTPMT == NULL || reqPubTPMTSz == NULL ||
+            tpmPubKey == NULL || tpmPubKeySz == NULL) {
+        return 0;
+    }
+    if (ctx->ctx.state != WOLFSPDM_STATE_CONNECTED || ctx->ctx.sessionId == 0) {
+        return 0;
+    }
+    *reqPubTPMT = ctx->ctx.reqPubKeyTPMT;
+    *reqPubTPMTSz = ctx->ctx.reqPubKeyTPMTLen;
+    *tpmPubKey = ctx->idPubKey;
+    *tpmPubKeySz = ctx->flags.hasIdKey ? ctx->idPubKeyLen : 0;
+    return 1;
+}
+
 void wolfSPDM_RespReset(WOLFSPDM_RESP_CTX* ctx)
 {
     if (ctx == NULL) {

@@ -91,6 +91,14 @@ WOLFTPM_API void wolfSPDM_RespReset(WOLFSPDM_RESP_CTX* ctx);
  * Toggled by the requester via SPDMONLY vendor command. */
 WOLFTPM_API int wolfSPDM_RespIsLocked(const WOLFSPDM_RESP_CTX* ctx);
 
+/* Returns 1 when a secured session is established. reqPubTPMT is the
+ * requester's TPMT_PUBLIC from GIVE_PUB (size 0 if none, e.g. PSK mode);
+ * tpmPubKey is the responder identity key as raw P-384 X||Y (size 0 if
+ * no identity key). Pointers reference ctx storage. */
+WOLFTPM_API int wolfSPDM_RespGetSessionKeys(const WOLFSPDM_RESP_CTX* ctx,
+    const byte** reqPubTPMT, word32* reqPubTPMTSz,
+    const byte** tpmPubKey, word32* tpmPubKeySz);
+
 #ifdef __cplusplus
 }
 #endif
