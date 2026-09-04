@@ -447,6 +447,10 @@ elif [ "$VENDOR" = "fwtpm-tcg" ]; then
     fi
     run_test "Status in SPDM-only mode" run_identity --status
     run_test "TPM capabilities in SPDM-only mode" run_identity --caps
+    run_test_output "SPDM session info reports the session" \
+        "Sessions: 1" run_identity --connect --session-info
+    run_test "PolicyTransportSPDM NV binding over SPDM" \
+        run_identity --connect --policy-nv
     run_test "Unlock SPDM-only mode" run_identity --connect --unlock
 
     if [ -x "$CAPS_DEMO" ]; then
@@ -522,6 +526,11 @@ elif [ "$VENDOR" = "fwtpm-psk" ]; then
     run_test_output "Status preserves the PSK session for TPM commands" \
         "Session: active" "$SPDM_DEMO" --vendor=nations \
         --psk "$NATIONS_PSK" --status --caps
+    run_test_output "SPDM session info reports the PSK session" \
+        "Sessions: 1" "$SPDM_DEMO" --vendor=nations \
+        --psk "$NATIONS_PSK" --session-info
+    run_test "PolicyTransportSPDM NV binding over PSK session" \
+        "$SPDM_DEMO" --vendor=nations --psk "$NATIONS_PSK" --policy-nv
     run_test "Unlock PSK SPDM-only mode" "$SPDM_DEMO" --vendor=nations \
         --psk "$NATIONS_PSK" --unlock
     run_test "PSK clear (PSK_CLEAR)" "$SPDM_DEMO" --vendor=nations \

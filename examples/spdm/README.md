@@ -64,6 +64,8 @@ make
 | `--responder-pubkey <hex>` | Pin a trusted raw P-384 X\|\|Y key (192 hex characters) |
 | `--connect` | Establish SPDM session (ECDH P-384 handshake) |
 | `--caps` | Read TPM capabilities over the current transport |
+| `--session-info` | Show the TPM's view of the SPDM session (`TPM_CAP_SPDM_SESSION_INFO` key names) |
+| `--policy-nv` | Define an NV index guarded by `TPM2_PolicyTransportSPDM`, then write and read it over the session |
 | `--psk <hex>` | Start a PSK session |
 | `--psk-set <psk> <clearauth>` | Provision a 64-byte PSK and 32-byte ClearAuth |
 | `--psk-clear <clearauth>` | Clear a provisioned PSK |
