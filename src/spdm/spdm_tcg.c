@@ -204,6 +204,9 @@ int wolfSPDM_BuildVendorDefined(
     if (vdCode == NULL || outBuf == NULL) {
         return WOLFSPDM_E_INVALID_ARG;
     }
+    if (payload == NULL && payloadSz != 0) {
+        return WOLFSPDM_E_INVALID_ARG;
+    }
     if (payloadSz > (word32)(0xFFFFu - WOLFSPDM_VDCODE_LEN)) {
         return WOLFSPDM_E_INVALID_ARG;
     }
