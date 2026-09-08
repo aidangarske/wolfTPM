@@ -63,6 +63,10 @@ int wolfSPDM_Nuvoton_GetStatus(
      * Byte 1: SpecVersionMinor (1 = SPDM 1.1, 3 = SPDM 1.3)
      * Byte 2: Reserved
      * Byte 3: SPDMOnly lock state (0 = unlocked, 1 = locked) */
+    if (rsp.payloadSz == 0) {
+        return WOLFSPDM_E_FRAMING;
+    }
+
     if (rsp.payloadSz >= 4) {
         byte specMajor = rsp.payload[0];
         byte specMinor = rsp.payload[1];
@@ -76,7 +80,7 @@ int wolfSPDM_Nuvoton_GetStatus(
 
         wolfSPDM_DebugPrint(ctx, "GET_STS_: SpecVersion=%u.%u, SPDMOnly=%s\n",
             specMajor, specMinor, spdmOnly ? "LOCKED" : "unlocked");
-    } else if (rsp.payloadSz >= 1) {
+    } else {
         status->spdmOnlyLocked = (rsp.payload[0] != 0);
         status->spdmEnabled = 1;
         wolfSPDM_DebugPrint(ctx, "GET_STS_: SPDMOnly=%s (minimal response)\n",
