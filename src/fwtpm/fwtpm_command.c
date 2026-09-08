@@ -18961,11 +18961,16 @@ static TPM_RC FwCheckPolicyAssertions(FWTPM_CTX* ctx,
     }
     if (rc == 0 && sess->nameHash.size > 0) {
         if (FwComputeNameHash(ctx, sess->authHash, handles, handleCnt,
-                digest, &digestSz) != 0 ||
-            (int)sess->nameHash.size != digestSz ||
-            TPM2_ConstantCompare(sess->nameHash.buffer, digest,
-                (word32)digestSz) != 0) {
+                digest, &digestSz) != 0) {
             rc = TPM_RC_POLICY_FAIL;
+        }
+        else {
+            int mism = ((int)sess->nameHash.size != digestSz);
+            mism |= (TPM2_ConstantCompare(sess->nameHash.buffer, digest,
+                (word32)digestSz) != 0);
+            if (mism) {
+                rc = TPM_RC_POLICY_FAIL;
+            }
         }
     }
     /* PolicyTemplate binds only the creation template (Part 3 Sec.23.19);
@@ -18974,11 +18979,16 @@ static TPM_RC FwCheckPolicyAssertions(FWTPM_CTX* ctx,
         (cmdCode == TPM_CC_Create || cmdCode == TPM_CC_CreatePrimary ||
          cmdCode == TPM_CC_CreateLoaded)) {
         if (FwComputeTemplateHash(sess->authHash, cmdBuf, cmdSize, cpStart,
-                digest, &digestSz) != 0 ||
-            (int)sess->templateHash.size != digestSz ||
-            TPM2_ConstantCompare(sess->templateHash.buffer, digest,
-                (word32)digestSz) != 0) {
+                digest, &digestSz) != 0) {
             rc = TPM_RC_POLICY_FAIL;
+        }
+        else {
+            int mism = ((int)sess->templateHash.size != digestSz);
+            mism |= (TPM2_ConstantCompare(sess->templateHash.buffer, digest,
+                (word32)digestSz) != 0);
+            if (mism) {
+                rc = TPM_RC_POLICY_FAIL;
+            }
         }
     }
     if (rc == 0 && sess->checkNvWritten) {
