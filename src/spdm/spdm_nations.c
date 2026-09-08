@@ -66,15 +66,16 @@ int wolfSPDM_Nations_GetStatus(WOLFSPDM_CTX* ctx,
      * [0] SpecMajorVersion, [1] SpecMinorVersion,
      * [2] PSKSet (00=NO, 01=YES),
      * [3] SPDMOnly (00=DISABLED, 01=ENABLED, 81=PENDING_DISABLE) */
-    if (rsp.payloadSz >= 4) {
-        status->spdmEnabled = 1;
-        status->pskProvisioned = (rsp.payload[2] != 0);
-        status->spdmOnlyLocked = (rsp.payload[3] != 0);
-        wolfSPDM_DebugPrint(ctx, "GET_STS_: v%u.%u PSK=%s SPDMOnly=0x%02x\n",
-            rsp.payload[0], rsp.payload[1],
-            status->pskProvisioned ? "YES" : "NO",
-            rsp.payload[3]);
+    if (rsp.payloadSz < 4) {
+        return WOLFSPDM_E_FRAMING;
     }
+    status->spdmEnabled = 1;
+    status->pskProvisioned = (rsp.payload[2] != 0);
+    status->spdmOnlyLocked = (rsp.payload[3] != 0);
+    wolfSPDM_DebugPrint(ctx, "GET_STS_: v%u.%u PSK=%s SPDMOnly=0x%02x\n",
+        rsp.payload[0], rsp.payload[1],
+        status->pskProvisioned ? "YES" : "NO",
+        rsp.payload[3]);
 
     return WOLFSPDM_SUCCESS;
 }
