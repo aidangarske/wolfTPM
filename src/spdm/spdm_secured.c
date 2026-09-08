@@ -120,6 +120,12 @@ int wolfSPDM_EncryptInternal(WOLFSPDM_CTX* ctx,
         word16 appDataLen = (word16)(1 + plainSz);
         word16 encDataLen = (word16)(2 + appDataLen);
 
+        /* MCTP carries a 2-byte sequence field; fail rather than silently
+         * diverge from the peer IV once the counter overflows it */
+        if (ctx->reqSeqNum > 0xFFFF) {
+            return WOLFSPDM_E_SEQUENCE;
+        }
+
         plainBufSz = encDataLen;
         recordLen = (word16)(encDataLen + WOLFSPDM_AEAD_TAG_SIZE);
         hdrSz = 8;  /* 4 + 2 + 2 */
