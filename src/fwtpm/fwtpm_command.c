@@ -19722,6 +19722,8 @@ int FWTPM_ProcessCommand(FWTPM_CTX* ctx,
 
             authFail = FwCtAuthCompare(cmdAuths[pj].password,
                 (int)cmdAuths[pj].passwordSize, authVal, authValSz);
+            TPM2_ForceZero(cmdAuths[pj].password,
+                sizeof(cmdAuths[pj].password));
             if (authFail) {
                 TPM_RC authRc = TPM_RC_BAD_AUTH;
             #ifndef FWTPM_NO_DA
@@ -19785,8 +19787,11 @@ int FWTPM_ProcessCommand(FWTPM_CTX* ctx,
             if (hSess->sessionType == TPM_SE_POLICY &&
                 hSess->isPasswordPolicy &&
                 hSess->sessionKey.size == 0) {
-                if (FwCtAuthCompare(cmdAuths[hj].cmdHmac,
-                        (int)cmdAuths[hj].cmdHmacSize, authVal, authValSz)) {
+                int pwPolicyFail = FwCtAuthCompare(cmdAuths[hj].cmdHmac,
+                    (int)cmdAuths[hj].cmdHmacSize, authVal, authValSz);
+                TPM2_ForceZero(cmdAuths[hj].cmdHmac,
+                    sizeof(cmdAuths[hj].cmdHmac));
+                if (pwPolicyFail) {
                     TPM_RC authRc = TPM_RC_BAD_AUTH;
                 #ifndef FWTPM_NO_DA
                     TPM_HANDLE daHandle;
@@ -19834,6 +19839,8 @@ int FWTPM_ProcessCommand(FWTPM_CTX* ctx,
                 cmdAuths[hj].cmdHmacSize : (word32)expectedSz;
             hmacDiff = TPM2_ConstantCompare(cmdAuths[hj].cmdHmac,
                 expectedHmac, cmpSz);
+            TPM2_ForceZero(cmdAuths[hj].cmdHmac,
+                sizeof(cmdAuths[hj].cmdHmac));
             if (sizeMismatch | hmacDiff) {
                 TPM_RC authRc = TPM_RC_BAD_AUTH;
             #ifndef FWTPM_NO_DA
@@ -20133,10 +20140,12 @@ int FWTPM_ProcessCommand(FWTPM_CTX* ctx,
         FwFlushAllObjects(ctx);
         nvRc = FWTPM_NV_Save(ctx);
         if (nvRc != TPM_RC_SUCCESS) {
+            TPM2_ForceZero(cmdAuths, sizeof(cmdAuths));
             return nvRc;
         }
     }
 
+    TPM2_ForceZero(cmdAuths, sizeof(cmdAuths));
     return TPM_RC_SUCCESS;
 }
 
