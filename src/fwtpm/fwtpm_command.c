@@ -12392,11 +12392,13 @@ static TPM_RC FwCmd_PolicyTemplate(FWTPM_CTX* ctx, TPM2_Packet* cmd,
         if (sess->cpHashA.size > 0 || sess->nameHash.size > 0) {
             rc = TPM_RC_CPHASH;
         }
-        else if (sess->templateHash.size > 0 &&
-            (sess->templateHash.size != templateHashSz ||
-             TPM2_ConstantCompare(sess->templateHash.buffer, templateHash,
-                templateHashSz) != 0)) {
-            rc = TPM_RC_VALUE;
+        else if (sess->templateHash.size > 0) {
+            int mism = (sess->templateHash.size != templateHashSz);
+            mism |= (TPM2_ConstantCompare(sess->templateHash.buffer,
+                templateHash, templateHashSz) != 0);
+            if (mism) {
+                rc = TPM_RC_VALUE;
+            }
         }
     }
     if (rc == 0) {
