@@ -177,6 +177,7 @@ static int PKCS7_SignVerifyEx(WOLFTPM2_DEV* dev, int tpmDevId,
     if (rc != 0) goto exit;
 
     wc_PKCS7_Free(&pkcs7);
+    XMEMSET(&pkcs7, 0, sizeof(pkcs7));
 
     printf("PKCS7 Header %d\n", outputHeadSz);
     TPM2_PrintBin(outputHead, outputHeadSz);
@@ -237,6 +238,7 @@ static int PKCS7_SignVerifyEx(WOLFTPM2_DEV* dev, int tpmDevId,
     if (rc != 0) goto exit;
 
     wc_PKCS7_Free(&pkcs7);
+    XMEMSET(&pkcs7, 0, sizeof(pkcs7));
 
     printf("PKCS7 Container Verified (using TPM)\n");
 
@@ -250,10 +252,12 @@ static int PKCS7_SignVerifyEx(WOLFTPM2_DEV* dev, int tpmDevId,
         outputHead, outputHeadSz, outputFoot, outputFootSz);
     if (rc != 0) goto exit;
     wc_PKCS7_Free(&pkcs7);
+    XMEMSET(&pkcs7, 0, sizeof(pkcs7));
 
     printf("PKCS7 Container Verified (using software)\n");
 
 exit:
+    wc_PKCS7_Free(&pkcs7);
     return rc;
 }
 #endif /* ENABLE_PKCS7EX_EXAMPLE */
@@ -292,6 +296,7 @@ static int PKCS7_SignVerify(WOLFTPM2_DEV* dev, int tpmDevId,
     rc = wc_PKCS7_EncodeSignedData(&pkcs7, output, sizeof(output));
     if (rc <= 0) goto exit;
     wc_PKCS7_Free(&pkcs7);
+    XMEMSET(&pkcs7, 0, sizeof(pkcs7));
     outputSz = rc;
 
     printf("PKCS7 Signed Container %d\n", outputSz);
@@ -318,6 +323,7 @@ static int PKCS7_SignVerify(WOLFTPM2_DEV* dev, int tpmDevId,
     rc = wc_PKCS7_VerifySignedData(&pkcs7, output, outputSz);
     if (rc != 0) goto exit;
     wc_PKCS7_Free(&pkcs7);
+    XMEMSET(&pkcs7, 0, sizeof(pkcs7));
 
     printf("PKCS7 Container Verified (using TPM)\n");
 
@@ -329,10 +335,12 @@ static int PKCS7_SignVerify(WOLFTPM2_DEV* dev, int tpmDevId,
     rc = wc_PKCS7_VerifySignedData(&pkcs7, output, outputSz);
     if (rc != 0) goto exit;
     wc_PKCS7_Free(&pkcs7);
+    XMEMSET(&pkcs7, 0, sizeof(pkcs7));
 
     printf("PKCS7 Container Verified (using software)\n");
 
 exit:
+    wc_PKCS7_Free(&pkcs7);
     return rc;
 }
 
