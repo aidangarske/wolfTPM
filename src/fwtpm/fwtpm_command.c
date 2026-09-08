@@ -14377,11 +14377,10 @@ static TPM_RC FwEncryptDecryptCore(FWTPM_CTX* ctx, TPM2_Packet* cmd,
     (void)ctx;
     (void)ret;
 
-    FWTPM_ALLOC_BUF(inData, FWTPM_MAX_COMMAND_SIZE / 2);
+    FWTPM_CALLOC_BUF(inData, FWTPM_MAX_COMMAND_SIZE / 2);
     FWTPM_ALLOC_VAR(aes, Aes);
 
     XMEMSET(ivBuf, 0, sizeof(ivBuf));
-    XMEMSET(inData, 0, FWTPM_MAX_COMMAND_SIZE / 2);
 
     if (cmdSize < TPM2_HEADER_SIZE + 4) {
         rc = TPM_RC_COMMAND_SIZE;
