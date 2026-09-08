@@ -1137,7 +1137,6 @@ static int RespDispatchSecured(WOLFSPDM_RESP_CTX* rctx,
         case SPDM_END_SESSION:
             rc = RespBuildEndSessionAck(ctx, plain, plainSz,
                 respPlain, &respPlainSz);
-            sessionEnded = 1;
             break;
         case SPDM_VENDOR_DEFINED_REQUEST:
             rc = RespHandleVendorDefined(rctx, plain, plainSz,
@@ -1156,6 +1155,9 @@ static int RespDispatchSecured(WOLFSPDM_RESP_CTX* rctx,
     }
     if (rc == WOLFSPDM_SUCCESS && derivedAppKeys) {
         rc = wolfSPDM_DeriveAppDataKeys(ctx);
+    }
+    if (rc == WOLFSPDM_SUCCESS && code == SPDM_END_SESSION) {
+        sessionEnded = 1;
     }
 
     if (sessionEnded) {
