@@ -64,7 +64,13 @@ int wolfSPDM_BuildKeyExchange(WOLFSPDM_CTX* ctx, byte* buf, word32* bufSz)
     word32 pubKeyYSz = sizeof(pubKeyY);
     int rc;
 
-    SPDM_CHECK_BUILD_ARGS(ctx, buf, bufSz, 180);
+#ifdef WOLFSPDM_NUVOTON
+    SPDM_CHECK_BUILD_ARGS(ctx, buf, bufSz, 150);
+#elif defined(WOLFSPDM_NATIONS)
+    SPDM_CHECK_BUILD_ARGS(ctx, buf, bufSz, 138);
+#else
+    SPDM_CHECK_BUILD_ARGS(ctx, buf, bufSz, 158);
+#endif
 
     rc = wolfSPDM_GenerateEphemeralKey(ctx);
     if (rc == WOLFSPDM_SUCCESS)
