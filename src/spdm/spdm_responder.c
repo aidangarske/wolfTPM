@@ -467,6 +467,7 @@ static int RespBuildPskExchangeRsp(WOLFSPDM_RESP_CTX* rctx,
     word16 reqOpaqueLen;
     word32 off;
     word32 partialLen;
+    word32 declaredLen;
     byte th1Hash[WOLFSPDM_HASH_SIZE];
     byte verifyData[WOLFSPDM_HASH_SIZE];
     int rc;
@@ -490,9 +491,11 @@ static int RespBuildPskExchangeRsp(WOLFSPDM_RESP_CTX* rctx,
     reqHintLen = SPDM_Get16LE(&in[6]);
     reqContextLen = SPDM_Get16LE(&in[8]);
     reqOpaqueLen = SPDM_Get16LE(&in[10]);
-    (void)reqHintLen;
-    (void)reqContextLen;
-    (void)reqOpaqueLen;
+    declaredLen = 12u + (word32)reqHintLen + (word32)reqContextLen +
+        (word32)reqOpaqueLen;
+    if (declaredLen > inSz) {
+        return WOLFSPDM_E_FRAMING;
+    }
 
     ctx->rspSessionId = 0xFFFE;
     ctx->sessionId = (word32)ctx->reqSessionId |
