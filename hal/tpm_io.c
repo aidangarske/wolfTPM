@@ -183,6 +183,10 @@ int TPM2_IoCb(TPM2_CTX* ctx, INT32 isRead, UINT32 addr,
         (void)userCtx;
     #endif
 #else
+    if (buf == NULL || size == 0 || size > MAX_SPI_FRAMESIZE) {
+        return BAD_FUNC_ARG;
+    }
+
     /* Build TPM header */
     txBuf[1] = (addr>>16) & 0xFF;
     txBuf[2] = (addr>>8)  & 0xFF;
