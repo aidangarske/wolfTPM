@@ -2379,6 +2379,14 @@ static TPM_RC FwCmd_PCR_Read(FWTPM_CTX* ctx, TPM2_Packet* cmd, int cmdSize,
         printf("fwTPM: PCR_Read(selCount=%d)\n", pcrSelCount);
     #endif
 
+        /* Reject a selection count we cannot serialize entirely, rather
+         * than truncating parsing while still echoing the wire count. */
+        if (pcrSelCount > HASH_COUNT) {
+            rc = TPM_RC_VALUE;
+        }
+    }
+
+    if (rc == 0) {
         /* pcrUpdateCounter */
         TPM2_Packet_AppendU32(rsp, ctx->pcrUpdateCounter);
 
@@ -2386,19 +2394,18 @@ static TPM_RC FwCmd_PCR_Read(FWTPM_CTX* ctx, TPM2_Packet* cmd, int cmdSize,
         TPM2_Packet_AppendU32(rsp, pcrSelCount);
 
         numSel = pcrSelCount;
-        if (numSel > HASH_COUNT) {
-            numSel = HASH_COUNT;
-        }
 
         for (s = 0; s < numSel && rc == 0; s++) {
             int j;
+            UINT8 wireSizeOfSelect;
             if (cmd->pos + 4 > cmdSize) {
                 rc = TPM_RC_COMMAND_SIZE;
                 break;
             }
 
             TPM2_Packet_ParseU16(cmd, &selections[s].hashAlg);
-            TPM2_Packet_ParseU8(cmd, &selections[s].sizeOfSelect);
+            TPM2_Packet_ParseU8(cmd, &wireSizeOfSelect);
+            selections[s].sizeOfSelect = wireSizeOfSelect;
             if (selections[s].sizeOfSelect > PCR_SELECT_MAX) {
                 selections[s].sizeOfSelect = PCR_SELECT_MAX;
             }
@@ -2408,6 +2415,12 @@ static TPM_RC FwCmd_PCR_Read(FWTPM_CTX* ctx, TPM2_Packet* cmd, int cmdSize,
                     break;
                 }
                 TPM2_Packet_ParseU8(cmd, &selections[s].pcrSelect[j]);
+            }
+            /* Skip any wire select bytes beyond PCR_SELECT_MAX so later
+             * selections stay in sync with the wire format. */
+            if (rc == 0 && wireSizeOfSelect > selections[s].sizeOfSelect) {
+                TPM2_Packet_ParseBytes(cmd, NULL,
+                    wireSizeOfSelect - selections[s].sizeOfSelect);
             }
             if (rc != 0) {
                 break;
