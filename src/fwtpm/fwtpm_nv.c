@@ -2097,6 +2097,7 @@ int FWTPM_NV_Save(FWTPM_CTX* ctx)
                     rc = TPM_RC_MEMORY;
                 }
                 else {
+                    TPM2_ForceZero(buf, bufSz);
                     XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                     buf = newBuf;
                     bufSz = needed;
@@ -2214,6 +2215,7 @@ int FWTPM_NV_Save(FWTPM_CTX* ctx)
                     rc = TPM_RC_MEMORY;
                     break;
                 }
+                TPM2_ForceZero(buf, bufSz);
                 XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 buf = newBuf;
                 bufSz = needed;
@@ -2242,6 +2244,7 @@ int FWTPM_NV_Save(FWTPM_CTX* ctx)
                     rc = TPM_RC_MEMORY;
                     break;
                 }
+                TPM2_ForceZero(buf, bufSz);
                 XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 buf = newBuf;
                 bufSz = needed;
@@ -2269,6 +2272,7 @@ int FWTPM_NV_Save(FWTPM_CTX* ctx)
                     rc = TPM_RC_MEMORY;
                     break;
                 }
+                TPM2_ForceZero(buf, bufSz);
                 XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 buf = newBuf;
                 bufSz = needed;
