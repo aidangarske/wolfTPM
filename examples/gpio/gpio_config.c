@@ -176,6 +176,7 @@ int TPM2_GPIO_Config_Example(void* userCtx, int argc, char *argv[])
 #ifdef WOLFTPM_ST33
     if (caps.mfg != TPM_MFG_STM) {
         printf("TPM vendor mismatch. GPIO support requires an ST33 TPM 2.0 module\n");
+        rc = BAD_FUNC_ARG;
         goto exit;
     }
 
