@@ -10349,20 +10349,27 @@ static TPM_RC FwCmd_StartAuthSession(FWTPM_CTX* ctx, TPM2_Packet* cmd,
     FWTPM_Session* sess = NULL;
     TPM_HANDLE sessHandle = 0;
     int nonceSize = 0;
+    int paramSzPos = 0;
+    int paramStart = 0;
 
     FWTPM_ALLOC_BUF(encSalt, FWTPM_MAX_PUB_BUF);
-
-    (void)cmdTag;
-    (void)cmdSize;
 
     /* Parse: tpmKey(U32), bind(U32) */
     TPM2_Packet_ParseU32(cmd, &tpmKey);
     TPM2_Packet_ParseU32(cmd, &bind);
 
+    /* Session-tagged commands carry an authorization area between the
+     * handles and parameters; skip it so parameter parsing stays aligned. */
+    if (rc == 0 && cmdTag == TPM_ST_SESSIONS) {
+        rc = FwSkipAuthArea(cmd, cmdSize);
+    }
+
     /* Parse: nonceCaller (TPM2B) */
-    TPM2_Packet_ParseU16(cmd, &nonceCallerSize);
-    if (nonceCallerSize > sizeof(nonceCaller)) {
-        rc = TPM_RC_SIZE;
+    if (rc == 0) {
+        TPM2_Packet_ParseU16(cmd, &nonceCallerSize);
+        if (nonceCallerSize > sizeof(nonceCaller)) {
+            rc = TPM_RC_SIZE;
+        }
     }
     if (rc == 0 && nonceCallerSize > 0) {
         TPM2_Packet_ParseBytes(cmd, nonceCaller, nonceCallerSize);
@@ -10564,12 +10571,15 @@ static TPM_RC FwCmd_StartAuthSession(FWTPM_CTX* ctx, TPM2_Packet* cmd,
 
     /* Build response */
     if (rc == 0) {
-        /* sessionHandle(U32) + nonceTPM(TPM2B) */
+        /* sessionHandle is an output handle; nonceTPM is the sole
+         * parameter. Session-tagged requests use the sessions response
+         * framing so the dispatcher appends the response auth area. */
         TPM2_Packet_AppendU32(rsp, sessHandle);
+        paramStart = FwRspParamsBegin(rsp, cmdTag, &paramSzPos);
         TPM2_Packet_AppendU16(rsp, sess->nonceTPM.size);
         TPM2_Packet_AppendBytes(rsp, sess->nonceTPM.buffer,
             sess->nonceTPM.size);
-        FwRspFinalize(rsp, TPM_ST_NO_SESSIONS, TPM_RC_SUCCESS);
+        FwRspParamsEnd(rsp, cmdTag, paramSzPos, paramStart);
     }
 
     /* Cleanup on error: free session if it was allocated */
@@ -15574,7 +15584,11 @@ static TPM_RC FwCmd_MakeCredential(FWTPM_CTX* ctx, TPM2_Packet* cmd,
         }
     }
 
-    /* MakeCredential has no auth area */
+    /* Session-tagged commands carry an authorization area before the
+     * parameters; skip it so parameter parsing stays aligned. */
+    if (rc == 0 && cmdTag == TPM_ST_SESSIONS) {
+        rc = FwSkipAuthArea(cmd, cmdSize);
+    }
 
     /* credential (TPM2B_DIGEST) */
     if (rc == 0) {
@@ -19752,9 +19766,13 @@ int FWTPM_ProcessCommand(FWTPM_CTX* ctx,
     }
 
     /* HMAC session command verification per TPM 2.0 Part 1 Section 19.6.
-     * Compute cpHash and verify the command HMAC for each HMAC session. */
-    for (hj = 0; hj < cmdAuthCnt && hj < (int)entry->authHandleCnt; hj++) {
-        if (cmdAuths[hj].sess != NULL && cmdAuths[hj].cmdHmacSize > 0) {
+     * Compute cpHash and verify the command HMAC for each HMAC session.
+     * Auxiliary sessions (hj >= authHandleCnt: audit/encrypt/decrypt only)
+     * authorize no entity but still carry a session HMAC that must verify. */
+    for (hj = 0; hj < cmdAuthCnt; hj++) {
+        int isAuthSess = (hj < (int)entry->authHandleCnt);
+        if (cmdAuths[hj].sess != NULL &&
+            (cmdAuths[hj].cmdHmacSize > 0 || !isAuthSess)) {
             FWTPM_Session* hSess = cmdAuths[hj].sess;
             byte cpHash[TPM_MAX_DIGEST_SIZE];
             int cpHashSz = 0;
@@ -19767,6 +19785,23 @@ int FWTPM_ProcessCommand(FWTPM_CTX* ctx,
             int hmacDiff;
             word32 cmpSz;
 
+            /* An auxiliary session's HMAC key is its sessionKey alone, so an
+             * empty HMAC is only valid when that key is empty (an unsalted,
+             * unbound policy session), matching the reference TPM. */
+            if (!isAuthSess && cmdAuths[hj].cmdHmacSize == 0) {
+                if (hSess->sessionType == TPM_SE_POLICY &&
+                    hSess->sessionKey.size == 0) {
+                    continue;
+                }
+            #ifdef DEBUG_WOLFTPM
+                printf("fwTPM: Missing HMAC for auxiliary session "
+                    "0x%x (CC=0x%x)\n", cmdAuths[hj].handle, cmdCode);
+            #endif
+                *rspSize = FwBuildErrorResponse(rspBuf, rspCap,
+                    TPM_ST_NO_SESSIONS, TPM_RC_BAD_AUTH);
+                return TPM_RC_SUCCESS;
+            }
+
             /* Compute cpHash = H(commandCode || handleNames || cpBuffer) */
             if (FwComputeCpHash(hSess->authHash, cmdCode,
                     cmdBuf, cmdSize, cmdHandles, cmdHandleCnt,
@@ -19776,15 +19811,23 @@ int FWTPM_ProcessCommand(FWTPM_CTX* ctx,
                 return TPM_RC_SUCCESS;
             }
 
-            /* Look up entity authValue for HMAC key */
-            entityH = cmdHandles[hj];
-            FwLookupEntityAuth(ctx, entityH, &authVal, &authValSz);
+            /* Look up entity authValue for HMAC key. Auxiliary sessions
+             * authorize no entity, so their key has no authValue (this
+             * mirrors the response HMAC for extra sessions). */
+            if (isAuthSess) {
+                entityH = cmdHandles[hj];
+                FwLookupEntityAuth(ctx, entityH, &authVal, &authValSz);
+            }
+            else {
+                entityH = cmdAuths[hj].handle;
+            }
 
             /* PolicyPassword with no sessionKey (unsalted/unbound):
              * HMAC field contains plaintext authValue per spec Section 19.6.13.
              * Use fixed-length FwCtAuthCompare so the compare trip count can't
              * leak the auth value length (matches the TPM_RS_PW path). */
-            if (hSess->sessionType == TPM_SE_POLICY &&
+            if (isAuthSess &&
+                hSess->sessionType == TPM_SE_POLICY &&
                 hSess->isPasswordPolicy &&
                 hSess->sessionKey.size == 0) {
                 int pwPolicyFail = FwCtAuthCompare(cmdAuths[hj].cmdHmac,
@@ -19851,7 +19894,8 @@ int FWTPM_ProcessCommand(FWTPM_CTX* ctx,
                     "0x%x (CC=0x%x)\n", entityH, cmdCode);
             #endif
             #ifndef FWTPM_NO_DA
-                if (FwAuthSlotDAUse(ctx, entityH, 0, hSess,
+                /* No entity behind an auxiliary session, so no DA tracking */
+                if (isAuthSess && FwAuthSlotDAUse(ctx, entityH, 0, hSess,
                         cmdAuths[hj].cmdHmacSize, &daHandle) != 0) {
                     authRc = TPM_RC_AUTH_FAIL;
                     if (FwDaRegisterFailure(ctx, daHandle)) {
