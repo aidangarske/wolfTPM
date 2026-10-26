@@ -19085,6 +19085,56 @@ static void test_fwtpm_public_name_rsa_max(void)
 /* main                                                                */
 /* ================================================================== */
 
+#ifdef HAVE_ECC
+/* Fixed-width scalars must remain valid signatures, including a leading zero
+ * on P-521. The reference TPM emits the order's full byte width. */
+static void test_fwtpm_ecdsa_signature_padding(void)
+{
+    static const UINT16 curves[] = {
+        TPM_ECC_NIST_P256, TPM_ECC_NIST_P384, TPM_ECC_NIST_P521
+    };
+    FWTPM_CTX ctx;
+    FWTPM_Object obj;
+    TPM2_Packet packet;
+    TPMT_SIGNATURE sig;
+    byte digest[TPM_SHA256_DIGEST_SIZE];
+    int i, j, keySz;
+
+    XMEMSET(&ctx, 0, sizeof(ctx));
+    AssertIntEQ(fwtpm_test_startup(&ctx), TPM_RC_SUCCESS);
+    for (i = 0; i < (int)(sizeof(curves) / sizeof(curves[0])); i++) {
+        if (FwGetWcCurveId(curves[i]) < 0) {
+            continue;
+        }
+        keySz = FwGetEccKeySize(curves[i]);
+        XMEMSET(&obj, 0, sizeof(obj));
+        obj.pub.type = TPM_ALG_ECC;
+        obj.pub.parameters.eccDetail.curveID = curves[i];
+        AssertIntEQ(FwGenerateEccKey(&ctx.rng, curves[i], &obj.pub.unique.ecc,
+            obj.privKey, sizeof(obj.privKey), &obj.privKeySize), 0);
+        for (j = 0; j < 64; j++) {
+            XMEMSET(digest, j + 1, sizeof(digest));
+            XMEMSET(&packet, 0, sizeof(packet));
+            packet.buf = gRsp;
+            packet.size = sizeof(gRsp);
+            AssertIntEQ(FwSignDigestAndAppend(&ctx, &obj, TPM_ALG_ECDSA,
+                TPM_ALG_SHA256, digest, sizeof(digest), &packet), 0);
+            AssertFalse(packet.overflow);
+            packet.pos = 0;
+            XMEMSET(&sig, 0, sizeof(sig));
+            TPM2_Packet_ParseSignature(&packet, &sig);
+            AssertIntEQ(sig.signature.ecdsa.signatureR.size, keySz);
+            AssertIntEQ(sig.signature.ecdsa.signatureS.size, keySz);
+            AssertIntEQ(FwVerifySignatureCore(&obj, digest, sizeof(digest),
+                &sig), TPM_RC_SUCCESS);
+        }
+    }
+    wc_ForceZero(&obj, sizeof(obj));
+    FWTPM_Cleanup(&ctx);
+    fwtpm_pass("ECDSA fixed-width verified signatures:", 0);
+}
+#endif /* HAVE_ECC */
+
 #ifndef NO_MAIN_DRIVER
 int main(int argc, char *argv[])
 #else
@@ -19095,6 +19145,12 @@ int fwtpm_unit_tests(int argc, char *argv[])
 
     /* Remove stale NV state to ensure clean test runs */
     (void)remove(FWTPM_NV_FILE);
+
+#ifdef HAVE_ECC
+    if (argc == 1) {
+        test_fwtpm_ecdsa_signature_padding();
+    }
+#endif
 
 #ifdef WOLFTPM_FWTPM_UNIT_TEST
     if (argc == 2 && XSTRCMP(argv[1], "custom-io-hal") == 0) {
@@ -19113,6 +19169,13 @@ int fwtpm_unit_tests(int argc, char *argv[])
 #if defined(WOLFTPM_FWTPM_UNIT_TEST) && defined(WOLFTPM_SMALL_STACK)
     if (argc == 2 && XSTRCMP(argv[1], "crypto-alloc-failure") == 0) {
         test_fwtpm_crypto_alloc_failure();
+        return 0;
+    }
+#endif
+
+#ifdef HAVE_ECC
+    if (argc == 2 && XSTRCMP(argv[1], "ecdsa-padding") == 0) {
+        test_fwtpm_ecdsa_signature_padding();
         return 0;
     }
 #endif

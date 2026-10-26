@@ -3977,6 +3977,25 @@ TPM_RC FwSignDigestAndAppend(FWTPM_CTX* ctx, FWTPM_Object* obj,
                     rc = TPM_RC_FAILURE;
             }
 
+            /* Match the reference TPM's fixed-width ECDSA scalar encoding. */
+            if (rc == 0) {
+                int keySz = FwGetEccKeySize(
+                    obj->pub.parameters.eccDetail.curveID);
+                if (keySz <= 0 || keySz > (int)sizeof(rBuf) ||
+                        keySz > (int)sizeof(sBuf) ||
+                        rSz > (word32)keySz || sSz > (word32)keySz) {
+                    rc = TPM_RC_FAILURE;
+                }
+                else {
+                    XMEMMOVE(rBuf + keySz - rSz, rBuf, rSz);
+                    XMEMSET(rBuf, 0, keySz - rSz);
+                    rSz = (word32)keySz;
+                    XMEMMOVE(sBuf + keySz - sSz, sBuf, sSz);
+                    XMEMSET(sBuf, 0, keySz - sSz);
+                    sSz = (word32)keySz;
+                }
+            }
+
             if (rc == 0) {
                 TPM2_Packet_AppendU16(rsp, sigScheme);
                 TPM2_Packet_AppendU16(rsp, sigHashAlg);
