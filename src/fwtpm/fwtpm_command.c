@@ -2406,7 +2406,7 @@ static TPM_RC FwTestHashAlg(UINT16 hashAlg)
 {
     TPM_RC rc = TPM_RC_SUCCESS;
 
-    if (TPM2_GetHashDigestSize(hashAlg) <= 0) {
+    if (wc_HashGetDigestSize(FwGetWcHashType(hashAlg)) <= 0) {
         rc = TPM_RC_HASH;
     }
     return rc;
@@ -2543,10 +2543,12 @@ static TPM_RC FwTestPublicParms(TPM2_Packet* cmd, UINT16 algType)
         if (rc == 0) {
             rc = FwTestRsaScheme(&params.rsaDetail.scheme);
         }
-        /* keyBits 0 selects the 2048-bit default in FwDeriveRsaPrimaryKey. */
-        if (rc == 0 && keyBits != 0 && keyBits != 1024 && keyBits != 2048 &&
-                keyBits != 3072 && keyBits != 4096) {
-            rc = TPM_RC_KEY_SIZE;
+        /* TPMI_RSA_KEY_BITS has no default encoding and must describe a size
+         * supported by the build, including its public and private buffers. */
+        if (rc == 0 && (keyBits > MAX_RSA_KEY_BITS ||
+                (keyBits != 1024 && keyBits != 2048 &&
+                 keyBits != 3072 && keyBits != 4096))) {
+            rc = TPM_RC_VALUE;
         }
         /* exponent 0 selects the default; anything else must be odd > 2. */
         if (rc == 0 && params.rsaDetail.exponent != 0 &&
@@ -2573,7 +2575,7 @@ static TPM_RC FwTestPublicParms(TPM2_Packet* cmd, UINT16 algType)
     else {
         rc = TPM_RC_TYPE;
     }
-    return rc;
+    return rc == TPM_RC_KEY_SIZE ? TPM_RC_VALUE : rc;
 }
 
 #ifdef WOLFTPM_MLDSA
@@ -2961,6 +2963,12 @@ static TPM_RC FwCmd_TestParms(FWTPM_CTX* ctx, TPM2_Packet* cmd, int cmdSize,
 
     if (rc == 0) {
         FwRspFinalize(rsp, TPM_ST_NO_SESSIONS, TPM_RC_SUCCESS);
+    }
+
+    /* TestParms has one compound parameter. Format-one validation errors
+     * identify it; format-zero command errors have no parameter index. */
+    if ((rc & RC_FMT1) != 0) {
+        rc |= TPM_RC_P | TPM_RC_1;
     }
 
     return rc;
