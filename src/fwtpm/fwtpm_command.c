@@ -1836,12 +1836,27 @@ static TPM_RC FwCmd_GetCapability(FWTPM_CTX* ctx, TPM2_Packet* cmd,
                 { TPM_ALG_RSA, TPMA_ALGORITHM_asymmetric |
                     TPMA_ALGORITHM_object },
             #endif
+    #ifndef NO_SHA
+                { TPM_ALG_SHA1, TPMA_ALGORITHM_hash },
+    #endif
                 { TPM_ALG_SHA256, TPMA_ALGORITHM_hash },
             #ifdef WOLFSSL_SHA384
                 { TPM_ALG_SHA384, TPMA_ALGORITHM_hash },
             #endif
             #ifdef WOLFSSL_SHA512
                 { TPM_ALG_SHA512, TPMA_ALGORITHM_hash },
+            #endif
+            #if defined(WOLFSSL_SHA3) && !defined(WOLFSSL_NOSHA3_256)
+                { TPM_ALG_SHA3_256, TPMA_ALGORITHM_hash },
+            #endif
+            #if defined(WOLFSSL_SHA3) && !defined(WOLFSSL_NOSHA3_384)
+                { TPM_ALG_SHA3_384, TPMA_ALGORITHM_hash },
+            #endif
+            #if defined(WOLFSSL_SHA3) && !defined(WOLFSSL_NOSHA3_512)
+                { TPM_ALG_SHA3_512, TPMA_ALGORITHM_hash },
+            #endif
+            #ifdef WOLFSSL_SM3
+                { TPM_ALG_SM3_256, TPMA_ALGORITHM_hash },
             #endif
                 { TPM_ALG_HMAC, TPMA_ALGORITHM_hash |
                     TPMA_ALGORITHM_signing },
