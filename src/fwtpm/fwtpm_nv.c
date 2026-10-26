@@ -1605,6 +1605,7 @@ static int FwNvProcessEntry(FWTPM_CTX* ctx, UINT16 tag,
                     (proofVersion == 1) ? 1 : 0;
                 ctx->restartCount = restartCount;
                 ctx->shutdownStateSaved = shutdownState ? 1 : 0;
+                ctx->nvOrderly = 0;
             #ifndef FWTPM_NO_NV
                 if (counterMax > ctx->nvCounterMax) {
                     ctx->nvCounterMax = counterMax;
@@ -1615,8 +1616,16 @@ static int FwNvProcessEntry(FWTPM_CTX* ctx, UINT16 tag,
         }
 
         case FWTPM_NV_TAG_SHUTDOWN_STATE:
-            if (valueLen == 1) {
-                ctx->shutdownStateSaved = value[0] ? 1 : 0;
+            if (valueLen == 1 && value[0] <= 1) {
+                /* Legacy orderly Shutdown(STATE) marker. */
+                ctx->shutdownStateSaved = value[0] != 0;
+                ctx->nvOrderly = value[0] != 0;
+            }
+            else if (valueLen == 2 && value[0] <= 1 && value[1] == 1) {
+                /* Extended marker also distinguishes clean Shutdown(CLEAR).
+                 * Older readers reject this length instead of resuming it. */
+                ctx->shutdownStateSaved = value[0] != 0;
+                ctx->nvOrderly = 1;
             }
             else {
                 rc = TPM_RC_FAILURE;
@@ -2357,6 +2366,7 @@ int FWTPM_NV_Save(FWTPM_CTX* ctx)
     byte* buf = NULL;
     word32 bufSz = FWTPM_NV_MAX_ENTRY;
     word32 pos;
+    UINT64 clockValue = 0;
 
     if (ctx == NULL) {
         return BAD_FUNC_ARG;
@@ -2537,13 +2547,14 @@ int FWTPM_NV_Save(FWTPM_CTX* ctx)
         rc = FwNvAppendEntry(ctx, FWTPM_NV_TAG_FLAGS, buf, (UINT16)pos);
     }
 
-    /* --- Clock offset --- */
-    if (rc == 0 && ctx->clockOffset != 0) {
+    /* --- Clock checkpoint --- */
+    if (rc == 0) {
+        clockValue = FWTPM_Clock_GetMs(ctx);
         pos = 0;
         FwNvMarshalU32(buf, &pos, bufSz,
-            (UINT32)(ctx->clockOffset & 0xFFFFFFFF));
+            (UINT32)(clockValue & 0xFFFFFFFF));
         FwNvMarshalU32(buf, &pos, bufSz,
-            (UINT32)(ctx->clockOffset >> 32));
+            (UINT32)(clockValue >> 32));
         rc = FwNvAppendEntry(ctx, FWTPM_NV_TAG_CLOCK, buf, (UINT16)pos);
     }
 
@@ -2678,10 +2689,12 @@ int FWTPM_NV_Save(FWTPM_CTX* ctx)
     }
 
     /* Commit the orderly-state marker after every snapshot entry. */
-    if (rc == 0 && ctx->shutdownStateSaved) {
-        const byte stateSaved = 1;
+    if (rc == 0 && ctx->nvOrderly) {
+        byte stateSaved[2];
+        stateSaved[0] = ctx->shutdownStateSaved ? 1 : 0;
+        stateSaved[1] = 1;
         rc = FwNvAppendEntry(ctx, FWTPM_NV_TAG_SHUTDOWN_STATE,
-            &stateSaved, sizeof(stateSaved));
+            stateSaved, sizeof(stateSaved));
     }
 
     /* Append-only compaction defers its checkpoint until every entry is
@@ -2701,6 +2714,13 @@ int FWTPM_NV_Save(FWTPM_CTX* ctx)
 #ifdef DEBUG_WOLFTPM
     printf("fwTPM: NV saved (compact, %d bytes)\n", (int)ctx->nvWritePos);
 #endif
+
+    if (rc == TPM_RC_SUCCESS) {
+        ctx->clockNvValue = clockValue;
+        if (ctx->nvOrderly || ctx->clockNvValue >= ctx->clockUnsafeUntil) {
+            ctx->clockSafe = 1;
+        }
+    }
 
     ctx->nvCompacting = 0;
     TPM2_ForceZero(buf, bufSz);
@@ -2852,6 +2872,7 @@ int FWTPM_NV_SaveFlags(FWTPM_CTX* ctx)
     return TPM_RC_SUCCESS;
 #else
     int rc;
+    int oldOrderly;
     byte buf[1 + 12 + 4 + 4 + 1 + 4 + 1 + 8];
     word32 pos = 0;
 
@@ -2890,7 +2911,14 @@ int FWTPM_NV_SaveFlags(FWTPM_CTX* ctx)
     FwNvMarshalU32(buf, &pos, sizeof(buf),
         (UINT32)(ctx->nvCounterMax >> 32));
 
+    /* Compaction consumes current RAM state instead of appending this
+     * entry. It must see the dirty state before it writes a snapshot. */
+    oldOrderly = ctx->nvOrderly;
+    ctx->nvOrderly = 0;
     rc = FwNvAppendEntry(ctx, FWTPM_NV_TAG_FLAGS, buf, (UINT16)pos);
+    if (rc != TPM_RC_SUCCESS) {
+        ctx->nvOrderly = oldOrderly;
+    }
     return rc;
 #endif /* FWTPM_NO_NV */
 }
@@ -2900,17 +2928,28 @@ int FWTPM_NV_SaveClock(FWTPM_CTX* ctx)
     int rc;
     byte buf[8]; /* UINT64 as two U32 (lo, hi) */
     word32 pos = 0;
+    UINT64 clockValue;
 
     if (ctx == NULL) {
         return BAD_FUNC_ARG;
     }
 
+    clockValue = FWTPM_Clock_GetMs(ctx);
     FwNvMarshalU32(buf, &pos, sizeof(buf),
-        (UINT32)(ctx->clockOffset & 0xFFFFFFFF));
+        (UINT32)(clockValue & 0xFFFFFFFF));
     FwNvMarshalU32(buf, &pos, sizeof(buf),
-        (UINT32)(ctx->clockOffset >> 32));
+        (UINT32)(clockValue >> 32));
 
     rc = FwNvAppendEntry(ctx, FWTPM_NV_TAG_CLOCK, buf, (UINT16)pos);
+    if (rc == TPM_RC_FAILURE || rc < 0) {
+        rc = TPM_RC_NV_UNAVAILABLE;
+    }
+    if (rc == TPM_RC_SUCCESS) {
+        ctx->clockNvValue = clockValue;
+        if (clockValue >= ctx->clockUnsafeUntil) {
+            ctx->clockSafe = 1;
+        }
+    }
     return rc;
 }
 

@@ -51,6 +51,7 @@
 
 #include <sys/mman.h>
 #include <semaphore.h>
+#include <time.h>
 
 /* Internal context for POSIX shm transport */
 typedef struct {
@@ -179,18 +180,30 @@ static int TisShmInit(void* ctx, FWTPM_TIS_REGS** regs)
 static int TisShmWaitRequest(void* ctx)
 {
     FWTPM_TIS_SHM_CTX* shm = (FWTPM_TIS_SHM_CTX*)ctx;
-
-    if (sem_wait(shm->semCmd) != 0) {
-        if (errno == EINTR) {
-            return -1; /* caller should continue loop */
-        }
-    #ifdef DEBUG_WOLFTPM
-        printf("fwTPM TIS: sem_wait error %d (%s)\n",
-            errno, strerror(errno));
-    #endif
-        return -2; /* fatal error */
+#ifdef __APPLE__
+    struct timespec delay;
+    unsigned int waited;
+    delay.tv_sec = 0;
+    delay.tv_nsec = 1000000L;
+    for (waited = 0; waited < FWTPM_CLOCK_POLL_MS; waited++) {
+        if (sem_trywait(shm->semCmd) == 0) return 0;
+        if (errno == EINTR) return -1;
+        if (errno != EAGAIN) return -2;
+        if (nanosleep(&delay, NULL) != 0) return -1;
     }
-    return 0;
+    return -1;
+#else
+    struct timespec deadline;
+    if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) return -2;
+    deadline.tv_sec += FWTPM_CLOCK_POLL_MS / 1000;
+    deadline.tv_nsec += (FWTPM_CLOCK_POLL_MS % 1000) * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_sec++;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    if (sem_timedwait(shm->semCmd, &deadline) == 0) return 0;
+    return errno == EINTR || errno == ETIMEDOUT ? -1 : -2;
+#endif
 }
 
 static int TisShmSignalResponse(void* ctx)

@@ -364,6 +364,12 @@
 #endif
 #endif
 
+/* Maximum NV Clock lag. The host polls at least once per second; checkpoint
+ * one poll early so scheduler wakeups stay within the advertised bound. */
+#define FWTPM_CLOCK_UPDATE_MS (1u << 22)
+#define FWTPM_CLOCK_POLL_MS   1000u
+#define FWTPM_ORDERLY_COUNT   1u
+
 /* Compile-time build date parsed from __DATE__ ("Mmm DD YYYY") */
 #define FWTPM_BUILD_YEAR \
     (((__DATE__[7] - '0') * 1000) + ((__DATE__[8] - '0') * 100) + \
@@ -829,6 +835,10 @@ typedef struct FWTPM_CTX {
                                  * consulted when no PP HAL is registered. */
 #endif
     UINT64 clockOffset;         /* Clock offset set by ClockSet */
+    UINT64 clockNvValue;        /* Last durable Clock checkpoint */
+    UINT64 clockUnsafeUntil;    /* Prior boot's potentially reported range */
+    int clockSafe;              /* Clock cannot repeat a reported value */
+    int nvOrderly;              /* Final clean snapshot marker was committed */
     UINT32 resetCount;          /* TPM Reset count, persisted across boots */
     UINT32 restartCount;        /* Restart/Resume count, reset by TPM Reset */
     byte timeEpoch[TPM_SHA384_DIGEST_SIZE]; /* Opaque ticket epoch nonce */
@@ -1076,6 +1086,25 @@ WOLFTPM_API int FWTPM_Clock_SetHAL(FWTPM_CTX* ctx,
     \sa FWTPM_Clock_SetHAL
 */
 WOLFTPM_API UINT64 FWTPM_Clock_GetMs(FWTPM_CTX* ctx);
+
+/*!
+    \ingroup wolfTPM_fwTPM
+    \brief Checkpoint Clock to NV when due. Command dispatch and socket loops
+    call this automatically. Embedded hosts must also call it at least every
+    FWTPM_CLOCK_POLL_MS milliseconds while idle, using a milliseconds-since-
+    power-on clock HAL. HAL wait, receive and send callbacks must return
+    within that interval.
+
+    \return TPM_RC_SUCCESS on success or when no update is due
+    \return BAD_FUNC_ARG if ctx is NULL
+    \return TPM_RC_NV_UNAVAILABLE when storage cannot be written
+    \return TPM_RC_NV_RATE when storage temporarily limits writes
+    \return other NV error if the checkpoint cannot be committed
+    \param ctx pointer to an initialized FWTPM_CTX
+    \sa FWTPM_Clock_SetHAL
+    \sa FWTPM_Clock_GetMs
+*/
+WOLFTPM_API int FWTPM_Clock_Update(FWTPM_CTX* ctx);
 
 /*!
     \ingroup wolfTPM_fwTPM

@@ -87,11 +87,32 @@ int FWTPM_IO_IsStopRequested(void)
 #define FWTPM_MAX_COMMAND_CLIENTS 8
 #define FWTPM_IO_CONNECTION_CLOSED (-1)
 
-static int SocketSend(SOCKET_T fd, const void* buf, int sz)
+/* Bound each blocking transfer, including clients that stop mid-packet. */
+static int SocketSetTimeouts(SOCKET_T fd)
+{
+#ifdef _WIN32
+    DWORD timeout = FWTPM_CLOCK_POLL_MS;
+#else
+    struct timeval timeout;
+    timeout.tv_sec = FWTPM_CLOCK_POLL_MS / 1000;
+    timeout.tv_usec = (FWTPM_CLOCK_POLL_MS % 1000) * 1000;
+#endif
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+            (const char*)&timeout, sizeof(timeout)) != 0 ||
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+            (const char*)&timeout, sizeof(timeout)) != 0) {
+        return TPM_RC_FAILURE;
+    }
+    return TPM_RC_SUCCESS;
+}
+
+static int SocketSend(FWTPM_CTX* ctx, SOCKET_T fd, const void* buf, int sz)
 {
     const char* ptr = (const char*)buf;
     int remaining = sz;
     while (remaining > 0) {
+        int rc = FWTPM_Clock_Update(ctx);
+        if (rc != TPM_RC_SUCCESS) return rc;
     #ifdef _WIN32
         int sent = send(fd, ptr, remaining, 0);
     #else
@@ -120,11 +141,13 @@ static int SocketSend(SOCKET_T fd, const void* buf, int sz)
     return TPM_RC_SUCCESS;
 }
 
-static int SocketRecv(SOCKET_T fd, void* buf, int sz)
+static int SocketRecv(FWTPM_CTX* ctx, SOCKET_T fd, void* buf, int sz)
 {
     char* ptr = (char*)buf;
     int remaining = sz;
     while (remaining > 0) {
+        int rc = FWTPM_Clock_Update(ctx);
+        if (rc != TPM_RC_SUCCESS) return rc;
     #ifdef _WIN32
         int got = recv(fd, ptr, remaining, 0);
     #else
@@ -167,7 +190,7 @@ static int TransportSend(FWTPM_CTX* ctx, int type, SOCKET_T fd,
     if (fd == FWTPM_INVALID_FD) {
         return TPM_RC_FAILURE;
     }
-    return SocketSend(fd, buf, sz);
+    return SocketSend(ctx, fd, buf, sz);
 }
 
 static int TransportRecv(FWTPM_CTX* ctx, int type, SOCKET_T fd,
@@ -179,7 +202,7 @@ static int TransportRecv(FWTPM_CTX* ctx, int type, SOCKET_T fd,
     if (fd == FWTPM_INVALID_FD) {
         return TPM_RC_FAILURE;
     }
-    return SocketRecv(fd, buf, sz);
+    return SocketRecv(ctx, fd, buf, sz);
 }
 
 static SOCKET_T CreateListenSocket(int port)
@@ -640,13 +663,18 @@ static int CustomServerLoop(FWTPM_CTX* ctx)
 
     ctx->running = 1;
     while (ctx->running) {
+        rc = FWTPM_Clock_Update(ctx);
+        if (rc != TPM_RC_SUCCESS) {
+            break;
+        }
         if (g_stopRequested) {
             ctx->running = 0;
             break;
         }
 
         events = ctx->ioHal.wait(ctx->ioHal.ctx,
-            FWTPM_IO_WAIT_TIMEOUT_MS);
+            FWTPM_IO_WAIT_TIMEOUT_MS < (int)FWTPM_CLOCK_POLL_MS ?
+                FWTPM_IO_WAIT_TIMEOUT_MS : (int)FWTPM_CLOCK_POLL_MS);
         if (g_stopRequested) {
             ctx->running = 0;
             break;
@@ -867,6 +895,10 @@ int FWTPM_IO_ServerLoop(FWTPM_CTX* ctx)
      * the command connection open while sending POWER_ON on the platform port.
      * A sequential accept/handle loop would deadlock here. */
     while (ctx->running) {
+        rc = FWTPM_Clock_Update(ctx);
+        if (rc != TPM_RC_SUCCESS) {
+            break;
+        }
         /* Propagate async stop request into ctx state from normal
          * control flow (signal handler only sets the volatile flag). */
         if (g_stopRequested) {
@@ -894,7 +926,7 @@ int FWTPM_IO_ServerLoop(FWTPM_CTX* ctx)
             if (platFd > maxFd) maxFd = platFd;
         }
 
-        tv.tv_sec = 30;
+        tv.tv_sec = FWTPM_CLOCK_POLL_MS / 1000;
         tv.tv_usec = 0;
         /* Windows ignores the first argument and its SOCKET does not fit an
          * int; everywhere else it is the descriptor bound and does. */
@@ -919,6 +951,10 @@ int FWTPM_IO_ServerLoop(FWTPM_CTX* ctx)
         if (FD_ISSET(ctx->io.platListenFd, &readFds)) {
             SOCKET_T newFd = accept(ctx->io.platListenFd, NULL, NULL);
             if (newFd != FWTPM_INVALID_FD) {
+                if (SocketSetTimeouts(newFd) != TPM_RC_SUCCESS) {
+                    CloseSocket(newFd);
+                    continue;
+                }
                 if (platFd != FWTPM_INVALID_FD) {
                 #ifdef DEBUG_WOLFTPM
                     printf("fwTPM: platform connection replaced\n");
@@ -953,6 +989,10 @@ int FWTPM_IO_ServerLoop(FWTPM_CTX* ctx)
         if (FD_ISSET(ctx->io.listenFd, &readFds)) {
             SOCKET_T newFd = accept(ctx->io.listenFd, NULL, NULL);
             if (newFd != FWTPM_INVALID_FD) {
+                if (SocketSetTimeouts(newFd) != TPM_RC_SUCCESS) {
+                    CloseSocket(newFd);
+                    continue;
+                }
                 for (i = 0; i < FWTPM_MAX_COMMAND_CLIENTS; i++) {
                     if (cmdFds[i] == FWTPM_INVALID_FD) {
                         cmdFds[i] = newFd;

@@ -163,6 +163,14 @@ int FWTPM_Init(FWTPM_CTX* ctx)
 #endif
 #endif
 
+    if (rc == TPM_RC_SUCCESS) {
+        ctx->clockNvValue = ctx->clockOffset;
+        ctx->clockSafe = ctx->nvOrderly;
+        ctx->clockUnsafeUntil = ctx->clockNvValue >
+            ~(UINT64)0 - FWTPM_CLOCK_UPDATE_MS ? ~(UINT64)0 :
+            ctx->clockNvValue + FWTPM_CLOCK_UPDATE_MS;
+    }
+
     if (rc != 0) {
         if (rngInit) {
             wc_FreeRng(&ctx->rng);
@@ -230,6 +238,23 @@ UINT64 FWTPM_Clock_GetMs(FWTPM_CTX* ctx)
         now = ctx->clockHal.get_ms(ctx->clockHal.ctx);
     }
     return now + ctx->clockOffset;
+}
+
+int FWTPM_Clock_Update(FWTPM_CTX* ctx)
+{
+    if (ctx == NULL) return BAD_FUNC_ARG;
+#if !defined(FWTPM_NO_CLOCK) && !defined(FWTPM_NO_NV)
+    if (ctx->wasStarted && ctx->powerOn) {
+        UINT64 now = FWTPM_Clock_GetMs(ctx);
+        if (now >= ctx->clockNvValue &&
+                (now - ctx->clockNvValue >=
+                    FWTPM_CLOCK_UPDATE_MS - FWTPM_CLOCK_POLL_MS ||
+                 (!ctx->clockSafe && now >= ctx->clockUnsafeUntil))) {
+            return FWTPM_NV_SaveClock(ctx);
+        }
+    }
+#endif
+    return TPM_RC_SUCCESS;
 }
 
 #ifndef FWTPM_NO_PP
